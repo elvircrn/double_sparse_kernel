@@ -10,7 +10,7 @@ DEBUG = False
 
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
-from double_sparse_compression import SparsifiedLinear
+from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLegacy
 
 
 def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
