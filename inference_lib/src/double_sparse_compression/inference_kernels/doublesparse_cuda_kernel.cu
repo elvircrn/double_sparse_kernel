@@ -16,7 +16,6 @@
 
 #include "common.cuh"
 
-#include <cassert>
 #include <cuda_fp16.h>
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
@@ -239,11 +238,19 @@ __global__ void doublesparse(int m, int n, int k,
     }
 #endif
 
+#define DISABLE_LDCS 1
+
     __syncthreads();
 
     for (; b_row_ptr < b_row_end; b_row_ptr += WARP_SIZE) {
       // We ran out of x.
+#if DISABLE_LDCS
       ColVal col_val = col_vals[b_row_ptr];
+#else
+      ColVal col_val{
+          ._ = __ldcs(reinterpret_cast<const u32*>(col_vals) + b_row_ptr)
+      };
+#endif
 
       auto local_c = col_val.members.c;
       if constexpr (!PHASE) {
@@ -283,7 +290,13 @@ __global__ void doublesparse(int m, int n, int k,
 
       for (; b_row_ptr < b_row_end; b_row_ptr += WARP_SIZE) {
         // We ran out of x.
+#if DISABLE_LDCS
         ColVal col_val = col_vals[b_row_ptr];
+#else
+        ColVal col_val{
+            ._ = __ldcs(reinterpret_cast<const u32*>(col_vals) + b_row_ptr)
+        };
+#endif
 
         if (col_val.members.c >= column_limit) {
           break;

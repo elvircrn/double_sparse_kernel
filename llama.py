@@ -363,5 +363,5 @@ if __name__ == "__main__":
         print("Dataset:", dataset)
         llama_eval(model, testloader, DEV, dataset, args.log_wandb)
 
-    if args.save:
+    if False and args.save:
         model.save_pretrained(args.save)
