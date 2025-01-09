@@ -261,7 +261,8 @@ class DoubleSparse:
         print('time %.2f' % (time.time() - tick))
 
         sparsified_linear = SparsifiedLinear.from_legacy(
-            DoubleSparseLegacy(m, n, k, self.A, self.B, device=self.layer.weight.device)
+            DoubleSparseLegacy(m, n, k, self.A, self.B),
+            self.layer.weight.device
         )
         self.layer = sparsified_linear
         if DEBUG:
