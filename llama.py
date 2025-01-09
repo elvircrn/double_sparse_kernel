@@ -9,6 +9,7 @@ from modelutils import *
 
 try:
     import wandb
+
     has_wandb = True
 except:
     has_wandb = False
@@ -18,11 +19,12 @@ def get_llama(model):
     import torch
     def skip(*args, **kwargs):
         pass
+
     torch.nn.init.kaiming_uniform_ = skip
     torch.nn.init.uniform_ = skip
     torch.nn.init.normal_ = skip
     from transformers import LlamaForCausalLM
-    model = LlamaForCausalLM.from_pretrained(model, torch_dtype='auto')#, cache_dir='/scratch/p490-24-t/llamas')
+    model = LlamaForCausalLM.from_pretrained(model, torch_dtype='auto')  # , cache_dir='/scratch/p490-24-t/llamas')
     model.seqlen = model.config.max_position_embeddings
     return model
 
@@ -45,7 +47,6 @@ def llama_sequential(model, dataloader, dev, save):
     )
     cache = {"i": 0, "attention_mask": None, "position_ids": torch.arange(model.seqlen).to(device=dev)}
     position_ids = torch.arange(model.seqlen).to(device=dev).unsqueeze(0)
-
 
     class Catcher(nn.Module):
         def __init__(self, module):
@@ -74,7 +75,6 @@ def llama_sequential(model, dataloader, dev, save):
     outs = torch.zeros_like(inps)
     attention_mask = cache["attention_mask"]
 
-
     if args.fix_mask:
         masks = {}
         for n, p in model.named_parameters():
@@ -85,10 +85,10 @@ def llama_sequential(model, dataloader, dev, save):
                 dim = shape_key[0]
                 nnz = 0.1 if shape_key[0] == shape_key[1] else 0.2
                 print(n, p.shape, shape_key, nnz)
-                A = torch.eye(dim,  device="cuda")
+                A = torch.eye(dim, device="cuda")
                 Arand = torch.rand_like(A)
                 Arand += A * 100
-                thres = Arand.abs().flatten().sort()[0][int(A.numel() * (1-nnz))]
+                thres = Arand.abs().flatten().sort()[0][int(A.numel() * (1 - nnz))]
                 masks[shape_key] = (Arand.abs() > thres)
 
     print("Ready.")
@@ -148,6 +148,7 @@ def llama_sequential(model, dataloader, dev, save):
                 )
                 if save:
                     full_path = os.path.join(save, str(i), name)
+                    os.makedirs(os.path.join(save, str(i), exist_ok=True)
                     torch.save(sparsified_linear, full_path)
                 gpts[name].free()
 
@@ -168,7 +169,7 @@ def llama_sequential(model, dataloader, dev, save):
 
 
 @torch.no_grad()
-def llama_eval(model, testenc, dev,  dataset: str, log_wandb: bool = False):
+def llama_eval(model, testenc, dev, dataset: str, log_wandb: bool = False):
     print("Evaluating ...")
 
     testenc = testenc.input_ids
@@ -187,6 +188,7 @@ def llama_eval(model, testenc, dev,  dataset: str, log_wandb: bool = False):
     )
     position_ids = torch.arange(model.seqlen).to(device=dev).unsqueeze(0)
     cache = {"i": 0, "attention_mask": None, "position_ids": position_ids}
+
     class Catcher(nn.Module):
         def __init__(self, module):
             super().__init__()
@@ -200,7 +202,7 @@ def llama_eval(model, testenc, dev,  dataset: str, log_wandb: bool = False):
 
     layers[0] = Catcher(layers[0])
     for i in range(nsamples):
-        batch = testenc[:, (i * model.seqlen) : ((i + 1) * model.seqlen)].to(dev)
+        batch = testenc[:, (i * model.seqlen): ((i + 1) * model.seqlen)].to(dev)
         try:
             model(batch)
         except ValueError:
@@ -246,7 +248,7 @@ def llama_eval(model, testenc, dev,  dataset: str, log_wandb: bool = False):
             hidden_states = model.model.norm(hidden_states)
         lm_logits = model.lm_head(hidden_states)
         shift_logits = lm_logits[:, :-1, :].contiguous()
-        shift_labels = testenc[:, (i * model.seqlen) : ((i + 1) * model.seqlen)][:, 1:]
+        shift_labels = testenc[:, (i * model.seqlen): ((i + 1) * model.seqlen)][:, 1:]
         loss_fct = nn.CrossEntropyLoss()
         loss = loss_fct(
             shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
@@ -339,7 +341,6 @@ if __name__ == "__main__":
     model = get_llama(args.model)
     model.eval()
     model = model.to(device=DEV)
-
 
     dataloader, testloader = get_loaders(
         args.dataset, nsamples=args.nsamples, seed=args.seed, model=args.model, seqlen=model.seqlen
