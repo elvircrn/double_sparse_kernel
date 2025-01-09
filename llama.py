@@ -147,8 +147,9 @@ def llama_sequential(model, dataloader, dev, save):
                     sparsity,
                 )
                 if save:
-                    os.makedirs(os.path.join(save, str(i), exist_ok=True))
-                    full_path = os.path.join(save, str(i), name)
+                    folder_path = os.path.join(save, str(i))
+                    os.makedirs(folder_path, exist_ok=True)
+                    full_path = os.path.join(folder_path, name)
                     torch.save(sparsified_linear, full_path)
                 gpts[name].free()
 
