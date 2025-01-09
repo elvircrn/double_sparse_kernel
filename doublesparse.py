@@ -254,6 +254,9 @@ class DoubleSparse:
         self.A = A.to_sparse_csr()
         self.B = B.to_sparse_csr()
 
+        m, k = A.shape
+        k, n = B.shape
+
         torch.cuda.synchronize()
         print('time %.2f' % (time.time() - tick))
 
