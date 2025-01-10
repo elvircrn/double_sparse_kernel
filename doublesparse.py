@@ -23,16 +23,12 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
     Wnn = W
     XY = An.T.matmul(Wnn)
     eye = torch.eye(XX.shape[1], device=XX.device)
-
-    # Cholesky decomposition instead of matrix inversion
-    L = torch.linalg.cholesky(XX + eye)
-    L2 = torch.linalg.cholesky(XX + eye * rho_start)
-
+    XXinv = torch.inverse(XX + eye)
+    XXinv2 = torch.inverse(XX + eye * rho_start)
     U = U * norm2.unsqueeze(1)
     Z = Z * norm2.unsqueeze(1)
 
-    # Solving the system instead of using inverse
-    B = torch.linalg.solve(L2, XY + rho_start * (Z - U))
+    B = XXinv2.matmul(XY + rho_start * (Z - U))
 
     bsparsity = min(0.99, 1 - nnz / B.numel())
 
@@ -48,10 +44,9 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
 
         Z = b_plus_u * mask
         U += B - Z
-        B = torch.linalg.solve(L, XY + (Z - U))
+        B = XXinv @ (XY + (Z - U))
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
-
 
 def _find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
