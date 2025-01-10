@@ -125,7 +125,7 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
 
     for itt in range(iters):
         if itt < prune_iters and fixmask is None:
-            mask = ((B + U).abs() > (B + U).abs().flatten().sort()[0][int(B.numel() * bsparsity)])
+            mask = ((B + U).abs() > (B + U).abs().kthvalue(int(B.numel() * bsparsity)).values)
 
         if fixmask is not None:
             assert fixmask.shape == Z.shape
