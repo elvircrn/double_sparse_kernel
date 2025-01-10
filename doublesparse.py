@@ -19,26 +19,22 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
     norm2 = torch.diag(XX).sqrt() + 1e-8
     An = A / norm2
     XX = An.T.matmul(An)
-    XX += torch.diag(torch.ones_like(XX.diag())) * XX.diag().mean() * reg
-
-    # norm2 = torch.ones_like(norm2)
-    Wnn = W  # * norm2.unsqueeze(1)
+    XX.diagonal().add_(XX.diagonal().mean() * reg)
+    Wnn = W
     XY = An.T.matmul(Wnn)
     eye = torch.eye(XX.shape[1], device=XX.device)
-    XXinv = torch.inverse(XX + eye)
-    XXinv2 = torch.inverse(XX + eye * rho_start)
+
+    # Cholesky decomposition instead of matrix inversion
+    L = torch.linalg.cholesky(XX + eye)
+    L2 = torch.linalg.cholesky(XX + eye * rho_start)
+
     U = U * norm2.unsqueeze(1)
     Z = Z * norm2.unsqueeze(1)
 
-    # B = torch.linalg.solve(XX, XY)
-    B = XXinv2.matmul(XY + rho_start * (Z - U))
-
-    # U = torch.zeros_like(B)
-
-    # Z = B
+    # Solving the system instead of using inverse
+    B = torch.linalg.solve(L2, XY + rho_start * (Z - U))
 
     bsparsity = min(0.99, 1 - nnz / B.numel())
-    # print("bs", bsparsity)
 
     for itt in range(iters):
         b_plus_u = (B + U)
@@ -52,9 +48,10 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
 
         Z = b_plus_u * mask
         U += B - Z
-        B = XXinv @ (XY + (Z - U))
+        B = torch.linalg.solve(L, XY + (Z - U))
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
+
 
 def _find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
