@@ -13,7 +13,7 @@ torch.backends.cudnn.allow_tf32 = False
 from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLegacy
 
 
-def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
+def __find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
     XX = A.T.matmul(A)
     norm2 = torch.diag(XX).sqrt() + 1e-8
@@ -104,6 +104,38 @@ def _find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
+def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
+                fixmask=None):
+    norm2 = torch.linalg.norm(A, dim=0) + 1e-8
+    An = A / norm2
+    XX = An.T @ An
+    XX.diagonal().add_(XX.diagonal().mean() * (1 + reg))
+
+    eye = torch.eye(XX.shape[1], device=XX.device)
+    XXinv = torch.linalg.inv(XX + eye)
+    XXinv2 = torch.linalg.inv(XX + eye * rho_start)
+
+    XY = An.T @ W
+    U *= norm2.unsqueeze(1)
+    Z *= norm2.unsqueeze(1)
+
+    B = XXinv2 @ (XY + rho_start * (Z - U))
+
+    bsparsity = min(0.99, 1 - nnz / B.numel())
+
+    for itt in range(iters):
+        if itt < prune_iters and fixmask is None:
+            mask = ((B + U).abs() > (B + U).abs().flatten().sort()[0][int(B.numel() * bsparsity)])
+
+        if fixmask is not None:
+            assert fixmask.shape == Z.shape
+            mask = fixmask
+
+        Z = (B + U) * mask
+        U += B - Z
+        B = XXinv @ (XY + rho * (Z - U))
+
+    return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
 
 def mag_prune(W, sp=0.6):
