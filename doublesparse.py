@@ -133,7 +133,7 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
 
         Z = (B + U) * mask
         U += B - Z
-        B = XXinv @ (XY + rho * (Z - U))
+        B = XXinv @ (XY + (Z - U))
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
