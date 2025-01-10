@@ -23,10 +23,10 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
 
     # norm2 = torch.ones_like(norm2)
     Wnn = W  # * norm2.unsqueeze(1)
-    rho = 1
     XY = An.T.matmul(Wnn)
-    XXinv = torch.inverse(XX + torch.eye(XX.shape[1], device=XX.device) * rho)
-    XXinv2 = torch.inverse(XX + torch.eye(XX.shape[1], device=XX.device) * rho_start)
+    eye = torch.eye(XX.shape[1], device=XX.device)
+    XXinv = torch.inverse(XX + eye)
+    XXinv2 = torch.inverse(XX + eye * rho_start)
     U = U * norm2.unsqueeze(1)
     Z = Z * norm2.unsqueeze(1)
 
@@ -44,7 +44,7 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
         b_plus_u = (B + U)
         b_plus_u_abs = b_plus_u.abs()
         if itt < prune_iters and fixmask is None:
-            mask = (b_plus_u_abs > b_plus_u_abs.flatten().kthvalue(int(B.numel() * bsparsity)).values)
+            mask = (b_plus_u_abs > b_plus_u_abs.flatten().sort()[0][int(B.numel() * cur_sparsity)])
 
         if fixmask is not None:
             assert fixmask.shape == Z.shape
