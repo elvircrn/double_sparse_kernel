@@ -13,7 +13,7 @@ torch.backends.cudnn.allow_tf32 = False
 from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLegacy
 
 
-def __find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
+def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
     XX = A.T.matmul(A)
     norm2 = torch.diag(XX).sqrt() + 1e-8
@@ -41,29 +41,18 @@ def __find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=
     # print("bs", bsparsity)
 
     for itt in range(iters):
+        b_plus_u = (B + U)
+        b_plus_u_abs = b_plus_u.abs()
         if itt < prune_iters and fixmask is None:
-            cur_sparsity = bsparsity  # - bsparsity * (1 - (itt + 1) / iterative_prune) ** 3
-            thres = (B + U).abs().flatten().sort()[0][int(B.numel() * cur_sparsity)]
-            mask = ((B + U).abs() > thres)
-            del thres
+            mask = (b_plus_u_abs > b_plus_u_abs.flatten().kthvalue(int(B.numel() * bsparsity)).values)
+
         if fixmask is not None:
             assert fixmask.shape == Z.shape
             mask = fixmask
 
-        Z = (B + U) * mask
-
-        U = U + (B - Z)
-
-        B = XXinv.matmul(XY + rho * (Z - U))
-        # B = torch.linalg.solve(XX + torch.eye(XX.shape[1], device=XX.device)*rho, XY + rho*(Z-U))
-        if debug:
-            print(itt, cur_sparsity, (Z != 0).sum().item() / Z.numel())
-            print_sc(A.matmul(B / norm2.unsqueeze(1)))
-            print_sc(A.matmul(Z / norm2.unsqueeze(1)))
-            print(((An != 0).sum() + (Z != 0).sum()) / W.numel())
-            print("-------")
-    if debug:
-        print("opt end")
+        Z = b_plus_u * mask
+        U += B - Z
+        B = XXinv @ (XY + (Z - U))
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
@@ -104,7 +93,7 @@ def _find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
-def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
+def ___find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
     norm2 = torch.linalg.norm(A, dim=0) + 1e-8
     An = A / norm2
