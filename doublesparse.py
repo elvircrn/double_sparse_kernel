@@ -39,7 +39,7 @@ def find_other2(A, W, nnz, Z, U, reg=0, rho_start=0.03, rho=1, iters=5, prune_it
 
     for itt in range(iters):
         if itt < prune_iters and fixmask is None:
-            thres = (B + U).abs().kthvalue(int(B.numel() * bsparsity)).values
+            thres = (B + U).abs().flatten().kthvalue(int(B.numel() * bsparsity)).values
             mask = (B + U).abs() > thres
         elif fixmask is not None:
             mask = fixmask
