@@ -258,6 +258,9 @@ def llama_eval(model, testenc, dev, dataset: str, log_wandb: bool = False):
         nlls.append(neg_log_likelihood)
     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
     print(f"Perplexity: {ppl.item():3f}")
+
+    import pdb; pdb.set_trace() # TODO: Remove
+
     if log_wandb:
         wandb.log({f"{dataset}/perplexity": ppl.item()})
 

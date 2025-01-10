@@ -67,34 +67,35 @@ class SparsifiedLinear(torch.nn.Module):
 
     @staticmethod
     def from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
+        IS_CSC = False
         b_sparse = double_sparse_legacy.b
         b_row_offsets = b_sparse.crow_indices()
-        row_counts = torch.diff(b_row_offsets)
-        non_zero_rows = (row_counts != 0).sum().item()
-        row_ids = row_counts.argsort(descending=True)
 
-        non_zero_row_ids = row_counts[row_ids][:non_zero_rows].argsort()
-        row_ids[:non_zero_rows] = row_ids[non_zero_row_ids]
+        row_counts = torch.diff(b_row_offsets)
+        non_zero_row_count = (row_counts != 0).sum().item()
+
+        row_ids = row_counts.argsort()
+        row_ids = row_ids[row_counts[row_ids] != 0]
 
         a_dense = double_sparse_legacy.a.to_dense()[:, row_ids]
         b_dense = b_sparse.to_dense()[row_ids, :]
 
-        if False:
+        if IS_CSC:
             a_sparse = a_dense.t().to_sparse_csr()
         else:
             a_sparse = a_dense.to_sparse_csr()
         b_sparse = b_dense.to_sparse_csr()
 
-        if False:
+        if IS_CSC:
             mod = SparsifiedLinear(
                 double_sparse_legacy.m,
                 double_sparse_legacy.n,
                 double_sparse_legacy.k,
-                a_sparse.crow_indices()[:(non_zero_rows + 1)].int(),
+                a_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
                 merge_col_val(a_sparse.col_indices().short(), a_sparse.values().half()),
-                b_sparse.crow_indices()[:(non_zero_rows + 1)].int(),
+                b_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
                 merge_col_val(b_sparse.col_indices().short(), b_sparse.values().half()),
-                non_zero_rows
+                non_zero_row_count
             )
         else:
             mod = SparsifiedLinear(
@@ -103,9 +104,9 @@ class SparsifiedLinear(torch.nn.Module):
                 double_sparse_legacy.k,
                 a_sparse.crow_indices().int(),
                 merge_col_val(a_sparse.col_indices().short(), a_sparse.values().half()),
-                b_sparse.crow_indices()[:(non_zero_rows + 1)].int(),
+                b_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
                 merge_col_val(b_sparse.col_indices().short(), b_sparse.values().half()),
-                non_zero_rows
+                non_zero_row_count
             )
 
 
@@ -170,7 +171,7 @@ class SparsifiedLinear(torch.nn.Module):
             self.b_col_vals,
             self.non_zero_rows,
             batch_size,
-            x,
+            x.flatten().contiguous(),
             FeatureFlags.CSR_ASYNC,
             y,
             y

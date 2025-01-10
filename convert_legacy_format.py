@@ -139,11 +139,11 @@ if __name__ == "__main__":
 
 
     if args.torch_pt_path:
-        not_quantized_weights_path = os.path.join(args.tensors_path, "not_quantized_weights.pt")
-        not_quantized_weights = torch.load(not_quantized_weights_path)
-        for w in not_quantized_weights.values():
-            w.requires_grad = False
-        model.load_state_dict(not_quantized_weights, strict=False)
+        # not_quantized_weights_path = os.path.join(args.tensors_path, "not_quantized_weights.pt")
+        # not_quantized_weights = torch.load(not_quantized_weights_path)
+        # for w in not_quantized_weights.values():
+        #     w.requires_grad = False
+        # model.load_state_dict(not_quantized_weights, strict=False)
 
         replace_and_save_quantized_layers(
             model,

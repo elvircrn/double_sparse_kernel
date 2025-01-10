@@ -433,8 +433,6 @@ __global__ void doublesparse_csc(int m, int n, int k,
   }
 
   acc = reduce_final(acc);
-
-
 }
 
 #define CALL_DOUBLE_MATMUL(P, SMEM_SIZE_FP32) doublesparse<P, WARP_COUNT><<<dim3(updiv(!P ? non_zero_rows : m, WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), stream>>>(m, n, k, \
