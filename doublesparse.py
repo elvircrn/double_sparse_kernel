@@ -14,20 +14,23 @@ from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLe
 
 def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
-    XX = (A.T @ A).div_(torch.linalg.norm(A, dim=0) + 1e-8).T @ A
-    diag_mean = XX.diagonal().mean()
-    XX.diagonal().add_(diag_mean * (1 + reg))
-    eye = torch.eye(XX.size(0), device=XX.device, dtype=XX.dtype)
-    XXinv = torch.linalg.inv(XX + eye)
+    XX = A.T @ A
+    norm2 = torch.linalg.norm(A, dim=0) + 1e-8
+    An = A / norm2
+    XX = An.T @ An
+    XX.diagonal().add_(XX.diagonal().mean() * reg)
+
+    eye = torch.eye(XX.shape[1], device=XX.device)
+    XXinv = torch.linalg.inv(XX + eye * rho)
     XXinv2 = torch.linalg.inv(XX + eye * rho_start)
 
+    Wnn = W
+    XY = An.T @ Wnn
 
-    Wnn = W  # * norm2.unsqueeze(1)
-    XY = An.T.matmul(Wnn)
-    U = U * norm2.unsqueeze(1)
-    Z = Z * norm2.unsqueeze(1)
+    U *= norm2.unsqueeze(1)
+    Z *= norm2.unsqueeze(1)
 
-    B = XXinv2.matmul(XY + rho_start * (Z - U))
+    B = XXinv2 @ (XY + rho_start * (Z - U))
 
     bsparsity = min(0.99, 1 - nnz / B.numel())
 
