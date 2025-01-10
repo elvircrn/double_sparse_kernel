@@ -24,19 +24,15 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
 
     # norm2 = torch.ones_like(norm2)
     Wnn = W  # * norm2.unsqueeze(1)
+    norm2 = torch.linalg.norm(A, dim=0) + 1e-8
+    An = A / norm2
     XY = An.T.matmul(Wnn)
     U = U * norm2.unsqueeze(1)
     Z = Z * norm2.unsqueeze(1)
 
-    # B = torch.linalg.solve(XX, XY)
     B = XXinv2.matmul(XY + rho_start * (Z - U))
 
-    # U = torch.zeros_like(B)
-
-    # Z = B
-
     bsparsity = min(0.99, 1 - nnz / B.numel())
-    # print("bs", bsparsity)
 
     for itt in range(iters):
         if itt < prune_iters and fixmask is None:
@@ -51,14 +47,6 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
         U = U + (B - Z)
 
         B = XXinv.matmul(XY + (Z - U))
-        if debug:
-            print(itt, cur_sparsity, (Z != 0).sum().item() / Z.numel())
-            print_sc(A.matmul(B / norm2.unsqueeze(1)))
-            print_sc(A.matmul(Z / norm2.unsqueeze(1)))
-            print(((An != 0).sum() + (Z != 0).sum()) / W.numel())
-            print("-------")
-    if debug:
-        print("opt end")
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
