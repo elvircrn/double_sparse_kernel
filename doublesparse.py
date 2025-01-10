@@ -15,6 +15,60 @@ from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLe
 
 def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
+    XX = A.T.matmul(A)
+    norm2 = torch.diag(XX).sqrt() + 1e-8
+    An = A / norm2
+    XX = An.T.matmul(An)
+    XX += torch.diag(torch.ones_like(XX.diag())) * XX.diag().mean() * reg
+
+    # norm2 = torch.ones_like(norm2)
+    Wnn = W  # * norm2.unsqueeze(1)
+    rho = 1
+    XY = An.T.matmul(Wnn)
+    XXinv = torch.inverse(XX + torch.eye(XX.shape[1], device=XX.device) * rho)
+    XXinv2 = torch.inverse(XX + torch.eye(XX.shape[1], device=XX.device) * rho_start)
+    U = U * norm2.unsqueeze(1)
+    Z = Z * norm2.unsqueeze(1)
+
+    # B = torch.linalg.solve(XX, XY)
+    B = XXinv2.matmul(XY + rho_start * (Z - U))
+
+    # U = torch.zeros_like(B)
+
+    # Z = B
+
+    bsparsity = min(0.99, 1 - nnz / B.numel())
+    # print("bs", bsparsity)
+
+    for itt in range(iters):
+        if itt < prune_iters and fixmask is None:
+            cur_sparsity = bsparsity  # - bsparsity * (1 - (itt + 1) / iterative_prune) ** 3
+            thres = (B + U).abs().flatten().sort()[0][int(B.numel() * cur_sparsity)]
+            mask = ((B + U).abs() > thres)
+            del thres
+        if fixmask is not None:
+            assert fixmask.shape == Z.shape
+            mask = fixmask
+
+        Z = (B + U) * mask
+
+        U = U + (B - Z)
+
+        B = XXinv.matmul(XY + rho * (Z - U))
+        # B = torch.linalg.solve(XX + torch.eye(XX.shape[1], device=XX.device)*rho, XY + rho*(Z-U))
+        if debug:
+            print(itt, cur_sparsity, (Z != 0).sum().item() / Z.numel())
+            print_sc(A.matmul(B / norm2.unsqueeze(1)))
+            print_sc(A.matmul(Z / norm2.unsqueeze(1)))
+            print(((An != 0).sum() + (Z != 0).sum()) / W.numel())
+            print("-------")
+    if debug:
+        print("opt end")
+
+    return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
+
+def _find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
+                fixmask=None):
     XX = (A.T @ A).div_(torch.linalg.norm(A, dim=0) + 1e-8).T @ A
     diag_mean = XX.diagonal().mean()
     XX.diagonal().add_(diag_mean * (1 + reg))
