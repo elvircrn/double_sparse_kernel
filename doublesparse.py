@@ -65,6 +65,7 @@ def factorizeT(W, XX, asp=0.16, sp=0.4, iters=40, fixmask=None):
         nza = int(W.shape[0] ** 2 * asp)
     else:
         nza = (fixmask != 0).sum().item()
+    nzb = int(W.numel() * sp - nza)
 
     Az = torch.eye(W.shape[0], device=W.device)
     Au = torch.zeros_like(Az)
