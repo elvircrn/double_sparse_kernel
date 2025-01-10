@@ -12,27 +12,31 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLegacy
 
+
 def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
                 fixmask=None):
-    XX = A.T @ A
-    norm2 = torch.linalg.norm(A, dim=0) + 1e-8
-    An = A / norm2
-    XX = An.T @ An
-    XX.diagonal().add_(XX.diagonal().mean() * reg)
-
-    eye = torch.eye(XX.shape[1], device=XX.device)
-    XXinv = torch.linalg.inv(XX + eye * rho)
+    XX = (A.T @ A).div_(torch.linalg.norm(A, dim=0) + 1e-8).T @ A
+    diag_mean = XX.diagonal().mean()
+    XX.diagonal().add_(diag_mean * (1 + reg))
+    eye = torch.eye(XX.size(0), device=XX.device, dtype=XX.dtype)
+    XXinv = torch.linalg.inv(XX + eye)
     XXinv2 = torch.linalg.inv(XX + eye * rho_start)
 
-    Wnn = W
-    XY = An.T @ Wnn
+    # norm2 = torch.ones_like(norm2)
+    Wnn = W  # * norm2.unsqueeze(1)
+    XY = An.T.matmul(Wnn)
+    U = U * norm2.unsqueeze(1)
+    Z = Z * norm2.unsqueeze(1)
 
-    U *= norm2.unsqueeze(1)
-    Z *= norm2.unsqueeze(1)
+    # B = torch.linalg.solve(XX, XY)
+    B = XXinv2.matmul(XY + rho_start * (Z - U))
 
-    B = XXinv2 @ (XY + rho_start * (Z - U))
+    # U = torch.zeros_like(B)
+
+    # Z = B
 
     bsparsity = min(0.99, 1 - nnz / B.numel())
+    # print("bs", bsparsity)
 
     for itt in range(iters):
         if itt < prune_iters and fixmask is None:
@@ -43,18 +47,21 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
             mask = fixmask
 
         Z = (B + U) * mask
-        U += B - Z
-        B = L_inv_rho @ (XY + rho * (Z - U))
 
+        U = U + (B - Z)
+
+        B = XXinv.matmul(XY + (Z - U))
         if debug:
-            print(itt, bsparsity, (Z != 0).sum().item() / Z.numel())
-            if print_sc:
-                print_sc(A @ (B / norm2.unsqueeze(1)))
-                print_sc(A @ (Z / norm2.unsqueeze(1)))
-            print(((A != 0).sum() + (Z != 0).sum()) / W.numel())
+            print(itt, cur_sparsity, (Z != 0).sum().item() / Z.numel())
+            print_sc(A.matmul(B / norm2.unsqueeze(1)))
+            print_sc(A.matmul(Z / norm2.unsqueeze(1)))
+            print(((An != 0).sum() + (Z != 0).sum()) / W.numel())
             print("-------")
+    if debug:
+        print("opt end")
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
+
 
 
 def mag_prune(W, sp=0.6):
