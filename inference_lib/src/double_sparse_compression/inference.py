@@ -176,7 +176,7 @@ class SparsifiedLinear(torch.nn.Module):
             y,
             y
         )
-        # import pdb; pdb.set_trace()
+        import pdb; pdb.set_trace()
         return y.view((1, self.m, batch_size)).transpose(1, 2)
 
 

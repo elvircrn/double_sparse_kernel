@@ -13,57 +13,39 @@ torch.backends.cudnn.allow_tf32 = False
 from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLegacy
 
 
-def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
-                fixmask=None):
-    XX = A.T.matmul(A)
-    norm2 = torch.diag(XX).sqrt() + 1e-8
-    An = A / norm2
-    XX = An.T.matmul(An)
-    XX += torch.diag(torch.ones_like(XX.diag())) * XX.diag().mean() * reg
+def find_other2(A, W, nnz, Z, U, reg=0, rho_start=0.03, rho=1, iters=5, prune_iters=2, fixmask=None, debug=False, print_sc=None):
+    XX = (A.T @ A).div_(torch.linalg.norm(A, dim=0) + 1e-8).T @ A
+    diag_mean = XX.diagonal().mean()
+    XX.diagonal().add_(diag_mean * (1 + reg))
+    eye = torch.eye(XX.size(0), device=XX.device, dtype=XX.dtype)
+    XXinv = torch.linalg.inv(XX + eye * rho)
+    XXinv2 = torch.linalg.inv(XX + eye * rho_start)
 
-    # norm2 = torch.ones_like(norm2)
-    Wnn = W  # * norm2.unsqueeze(1)
-    rho = 1
-    XY = An.T.matmul(Wnn)
-    XXinv = torch.inverse(XX + torch.eye(XX.shape[1], device=XX.device) * rho)
-    XXinv2 = torch.inverse(XX + torch.eye(XX.shape[1], device=XX.device) * rho_start)
-    U = U * norm2.unsqueeze(1)
-    Z = Z * norm2.unsqueeze(1)
-
-    # B = torch.linalg.solve(XX, XY)
-    B = XXinv2.matmul(XY + rho_start * (Z - U))
-
-    # U = torch.zeros_like(B)
-
-    # Z = B
-
+    norm2 = torch.linalg.norm(A, dim=0) + 1e-8
+    U *= norm2.unsqueeze(1)
+    Z *= norm2.unsqueeze(1)
+    XY = (A / norm2).T @ W
+    B = XXinv2 @ (XY + rho_start * (Z - U))
     bsparsity = min(0.99, 1 - nnz / B.numel())
-    # print("bs", bsparsity)
 
     for itt in range(iters):
         if itt < prune_iters and fixmask is None:
-            cur_sparsity = bsparsity  # - bsparsity * (1 - (itt + 1) / iterative_prune) ** 3
-            thres = (B + U).abs().flatten().sort()[0][int(B.numel() * cur_sparsity)]
-            mask = ((B + U).abs() > thres)
-            del thres
-        if fixmask is not None:
-            assert fixmask.shape == Z.shape
+            thres = (B + U).abs().kthvalue(int(B.numel() * bsparsity)).values
+            mask = (B + U).abs() > thres
+        elif fixmask is not None:
             mask = fixmask
 
         Z = (B + U) * mask
+        U += B - Z
+        B = XXinv @ (XY + rho * (Z - U))
 
-        U = U + (B - Z)
-
-        B = XXinv.matmul(XY + rho * (Z - U))
-        # B = torch.linalg.solve(XX + torch.eye(XX.shape[1], device=XX.device)*rho, XY + rho*(Z-U))
         if debug:
-            print(itt, cur_sparsity, (Z != 0).sum().item() / Z.numel())
-            print_sc(A.matmul(B / norm2.unsqueeze(1)))
-            print_sc(A.matmul(Z / norm2.unsqueeze(1)))
-            print(((An != 0).sum() + (Z != 0).sum()) / W.numel())
+            print(itt, bsparsity, (Z != 0).sum().item() / Z.numel())
+            if print_sc:
+                print_sc(A @ (B / norm2.unsqueeze(1)))
+                print_sc(A @ (Z / norm2.unsqueeze(1)))
+            print(((A != 0).sum() + (Z != 0).sum()) / W.numel())
             print("-------")
-    if debug:
-        print("opt end")
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
@@ -79,88 +61,64 @@ def ent(p):
 
 
 def factorizeT(W, XX, asp=0.16, sp=0.4, iters=40, fixmask=None):
-    # W = lx.weight.detach().T.float()
     if fixmask is None:
         nza = int(W.shape[0] ** 2 * asp)
     else:
         nza = (fixmask != 0).sum().item()
-    nzb = int(W.numel() * sp - nza)
 
     Az = torch.eye(W.shape[0], device=W.device)
     Au = torch.zeros_like(Az)
-    norm = XX.diag().sqrt().unsqueeze(1) + 1e-8
-
+    norm = XX.diagonal().sqrt_().unsqueeze(1) + 1e-8
     Wn = W * norm
-
     Bz = mag_prune(Wn, (1 - nzb / 2 / W.numel()))
     Bu = torch.zeros_like(Bz)
-
     for itt in range(iters):
-        # if itt < 10:
-        #    rho_start = 0.0
-        # elif itt < 15:
-        #    rho_start = 0.00
-        # else:
-        #    rho_start = 0.1
         rho_start = min(1.0, itt / (iters - 3)) ** 3
-        Az, Au = (x.T for x in
-                  find_other2(Bz.T, Wn.T, nza, Az.T, Au.T, reg=1e-2, debug=False, rho_start=rho_start, fixmask=fixmask))
+        Az, Au = map(torch.t, find_other2(Bz.T, Wn.T, nza, Az.T, Au.T, reg=1e-2, rho_start=rho_start, fixmask=fixmask))
+        Bz, Bu = find_other2(Az, Wn, nzb, Bz, Bu, reg=1e-2, rho_start=rho_start)
 
-        Bz, Bu = find_other2(Az, Wn, nzb, Bz, Bu, reg=1e-2, debug=False, rho_start=rho_start)
+    Az_nnz = (Az != 0).sum().item()
+    Bz_nnz = (Bz != 0).sum().item()
+    total_nnz = Az_nnz + Bz_nnz
+    ent_az = ent(Az_nnz / Az.numel())
+    ent_bz = ent(Bz_nnz / Bz.numel())
+    total_ent = (Az.numel() * ent_az + Bz.numel() * ent_bz) / W.numel()
 
-    print(((Az != 0).sum() + (Bz != 0).sum()).item() / W.numel(), (Az != 0).sum().item() / Az.numel(),
-          (Bz != 0).sum().item() / Bz.numel(), Az.shape, Bz.shape,
-          (Az.numel() * ent((Az != 0).sum().item() / Az.numel()) + Bz.numel() * ent(
-              (Bz != 0).sum().item() / Bz.numel())) / W.numel(),
-          ent(0.4), ent(0.5))
-    return ((Az / norm).matmul(Bz)).T, Bz.T, (Az / norm).T
+    print(total_nnz / W.numel(), Az_nnz / Az.numel(), Bz_nnz / Bz.numel(), Az.shape, Bz.shape, total_ent, ent(0.4), ent(0.5))
+    return (Az / norm) @ Bz, Bz.T, (Az / norm).T
 
 
 def factorizef(W, XX, asp=0.16, sp=0.4, iters=40, fixmask=None):
-    s_time = time.time()
     if W.shape[0] >= W.shape[1]:
-        return factorizeT(W.T, XX, asp, sp=sp, fixmask=fixmask)
+        return factorizeT(W.T, XX, asp, sp, fixmask)
 
-    if fixmask is None:
-        nza = int(W.shape[0] ** 2 * asp)
-    else:
-        nza = (fixmask != 0).sum().item()
+    nza = (fixmask != 0).sum().item() if fixmask is not None else int(W.shape[0] ** 2 * asp)
     nzb = int(W.numel() * sp - nza)
     if nzb < 0:
-        raise f'Error: sparsity set to high at {sp}'
-    norm = XX.diag().sqrt() + 1e-8
-
+        raise ValueError(f"Sparsity set too high: {sp}")
+    norm = XX.diagonal().sqrt_() + 1e-8
     Wn = W * norm
 
     Az = torch.eye(W.shape[0], device=W.device)
     Au = torch.zeros_like(Az)
-
-    Bz = mag_prune(Wn, (1 - nzb / 2 / W.numel()))
+    Bz = mag_prune(Wn, 1 - nzb / (2 * W.numel()))
     Bu = torch.zeros_like(Bz)
 
     for itt in range(iters):
-        # if itt < 10:
-        #    rho_start = 0.0
-        # elif itt < 15:
-        #    rho_start = 0.00
-        # else:
-        #    rho_start = 0.1
-
         rho_start = min(1.0, itt / (iters - 3)) ** 3
-        Az, Au = (x.T for x in
-                  find_other2(Bz.T, Wn.T, nza, Az.T, Au.T, reg=1e-2, debug=False, rho_start=rho_start, fixmask=fixmask))
+        Az, Au = map(torch.t, find_other2(Bz.T, Wn.T, nza, Az.T, Au.T, reg=1e-2, rho_start=rho_start, fixmask=fixmask))
+        Bz, Bu = find_other2(Az, Wn, nzb, Bz, Bu, reg=1e-2, rho_start=rho_start)
 
-        Bz, Bu = find_other2(Az, Wn, nzb, Bz, Bu, reg=1e-2, debug=False, rho_start=rho_start)
+    Az_nnz = (Az != 0).sum().item()
+    Bz_nnz = (Bz != 0).sum().item()
+    total_nnz = Az_nnz + Bz_nnz
+    ent_az = ent(Az_nnz / Az.numel())
+    ent_bz = ent(Bz_nnz / Bz.numel())
+    total_ent = (Az.numel() * ent_az + Bz.numel() * ent_bz) / W.numel()
 
-        # print(itt, time.time() - s_time, end =" ")
-        # print_scores(Az.matmul(Bz / norm))
+    print(total_nnz / W.numel(), Az_nnz / Az.numel(), Bz_nnz / Bz.numel(), Az.shape, Bz.shape, total_ent, ent(0.4), ent(0.5))
+    return Az @ (Bz / norm), Az, Bz / norm
 
-    print(((Az != 0).sum() + (Bz != 0).sum()).item() / W.numel(), (Az != 0).sum().item() / Az.numel(),
-          (Bz != 0).sum().item() / Bz.numel(), Az.shape, Bz.shape,
-          (Az.numel() * ent((Az != 0).sum().item() / Az.numel()) + Bz.numel() * ent(
-              (Bz != 0).sum().item() / Bz.numel())) / W.numel(),
-          ent(0.4), ent(0.5))
-    return Az.matmul(Bz / norm), Az, Bz / norm
 
 
 def finalize(XXb, W, Ab, Bb):
