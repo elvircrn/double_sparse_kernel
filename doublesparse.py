@@ -12,35 +12,30 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 from double_sparse_compression.inference import SparsifiedLinear, DoubleSparseLegacy
 
-
-def find_other2(A, W, nnz, Z, U, reg=0, rho_start=0.03, rho=1, iters=5, prune_iters=2, fixmask=None, debug=False, print_sc=None):
-    norm2 = torch.linalg.norm(A, dim=0) + 1e-8
-    An = A / norm2
-    XX = An.T @ An
-
+def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.03, iters=5, prune_iters=2,
+                fixmask=None):
+    XX = (A.T @ A).div_(torch.linalg.norm(A, dim=0) + 1e-8).T @ A
     diag_mean = XX.diagonal().mean()
     XX.diagonal().add_(diag_mean * (1 + reg))
     eye = torch.eye(XX.size(0), device=XX.device, dtype=XX.dtype)
+    XXinv = torch.linalg.inv(XX + eye)
+    XXinv2 = torch.linalg.inv(XX + eye * rho_start)
 
-    XX_plus_eye = XX + eye * rho
-    L_rho = torch.linalg.cholesky(XX_plus_eye)
-    L_inv_rho = torch.cholesky_inverse(L_rho)
 
-    XX_plus_eye_start = XX + eye * rho_start
-    L_rho_start = torch.linalg.cholesky(XX_plus_eye_start)
-    L_inv_rho_start = torch.cholesky_inverse(L_rho_start)
+    Wnn = W  # * norm2.unsqueeze(1)
+    XY = An.T.matmul(Wnn)
+    U = U * norm2.unsqueeze(1)
+    Z = Z * norm2.unsqueeze(1)
 
-    U *= norm2.unsqueeze(1)
-    Z *= norm2.unsqueeze(1)
-    XY = An.T @ W
-    B = L_inv_rho_start @ (XY + rho_start * (Z - U))
+    B = XXinv2.matmul(XY + rho_start * (Z - U))
 
     bsparsity = min(0.99, 1 - nnz / B.numel())
 
     for itt in range(iters):
         if itt < prune_iters and fixmask is None:
-            thres = (B + U).abs().flatten().kthvalue(int(B.numel() * bsparsity)).values
-            mask = (B + U).abs() > thres
+            BU = (B + U).abs()
+            thres = BU.flatten().kthvalue(int(B.numel() * bsparsity)).values
+            mask = BU.abs() > thres
         elif fixmask is not None:
             mask = fixmask
 
