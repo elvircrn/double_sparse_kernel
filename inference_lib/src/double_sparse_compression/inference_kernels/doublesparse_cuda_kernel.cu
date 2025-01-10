@@ -492,11 +492,14 @@ int doublesparse_matmul(
 
   float *d_workspace;
   if (features.flags.is_csc) {
-    cudaMalloc(reinterpret_cast<void **>(&d_workspace), sizeof(float) * m * batch_size);
-    cudaMemset(d_workspace, 0, m);
+    cudaMalloc(reinterpret_cast<void **>(&d_workspace), sizeof(float) * k * batch_size);
+    cudaMemset(d_workspace, 0, k * batch_size);
     cudaDeviceSynchronize();
   } else {
     cudaMalloc(reinterpret_cast<void **>(&d_workspace), sizeof(float) * k * batch_size);
+    // TODO: Remove?
+    cudaMemset(d_workspace, 0, k * batch_size);
+    cudaDeviceSynchronize();
   }
 
   constexpr

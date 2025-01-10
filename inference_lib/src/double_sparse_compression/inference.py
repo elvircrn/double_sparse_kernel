@@ -71,10 +71,10 @@ class SparsifiedLinear(torch.nn.Module):
         b_row_offsets = b_sparse.crow_indices()
         row_counts = torch.diff(b_row_offsets)
         non_zero_rows = (row_counts != 0).sum().item()
-        row_ids = (row_counts * -1).argsort()
+        row_ids = row_counts.argsort(descending=True)
 
         non_zero_row_ids = row_counts[row_ids][:non_zero_rows].argsort()
-        row_ids[:non_zero_rows] = non_zero_row_ids
+        row_ids[:non_zero_rows] = row_ids[non_zero_row_ids]
 
         a_dense = double_sparse_legacy.a.to_dense()[:, row_ids]
         b_dense = b_sparse.to_dense()[row_ids, :]
@@ -159,7 +159,7 @@ class SparsifiedLinear(torch.nn.Module):
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
         """
         batch_size = x.shape[1]
-        y = torch.empty(batch_size * self.m, dtype=torch.float16, device=self.dense_weights.device).contiguous()
+        y = torch.zeros(batch_size * self.m, dtype=torch.float16, device=x.device).contiguous()
         get_doublesparse_mul()(
             self.m,
             self.n,
@@ -171,11 +171,12 @@ class SparsifiedLinear(torch.nn.Module):
             self.non_zero_rows,
             batch_size,
             x,
+            FeatureFlags.CSR_ASYNC,
             y,
-            result,
-            feature_flag
+            y
         )
-        return y
+        # import pdb; pdb.set_trace()
+        return y.view((1, self.m, batch_size)).transpose(1, 2)
 
 
 def updiv(x, y):
@@ -191,6 +192,7 @@ IS_CSC = 1 << 1
 class FeatureFlags(IntEnum):
     CSR = 0
     CSC = IS_CSC
+    CSR_ASYNC = CSR | ASYNC
 
     def pretty(self):
         if self.value == self.CSR:

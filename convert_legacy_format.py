@@ -23,6 +23,7 @@ def load_legacy_tensor(p: str) -> DoubleSparseLegacy:
 def replace_and_save_quantized_layers(
         model_to_be_quantized,
         legacy_model_path,
+        is_legacy,
         current_model=None,
         layer_id: int = -1,
         parent_tensor_name="",
@@ -35,15 +36,19 @@ def replace_and_save_quantized_layers(
 
         if isinstance(m, torch.nn.Linear):
             assert m.bias is None
-            legacy_tensor_path = os.path.join(legacy_model_path, f"{layer_id}", f"{parent_tensor_name}.{tensor_name}")
-            if os.path.exists(legacy_tensor_path):
-                ds_legacy = load_legacy_tensor(legacy_tensor_path)
-                ds_module = SparsifiedLinear.from_legacy(ds_legacy, 'cpu')
+            tensor_path = os.path.join(legacy_model_path, f"{layer_id}", f"{parent_tensor_name}.{tensor_name}")
+            if os.path.exists(tensor_path):
+                if is_legacy:
+                    ds_legacy = load_legacy_tensor(tensor_path)
+                    ds_module = SparsifiedLinear.from_legacy(ds_legacy, 'cpu')
+                else:
+                    ds_module = torch.load(tensor_path, 'cpu')
                 setattr(current_model, tensor_name, ds_module)
         else:
             replace_and_save_quantized_layers(
                 model_to_be_quantized,
                 legacy_model_path,
+                is_legacy,
                 m,
                 layer_id,
                 tensor_name,
@@ -59,7 +64,7 @@ if __name__ == "__main__":
         help="path or name of the unquantized model",
     )
     parser.add_argument(
-        "--legacy_model_path",
+        "--tensors_path",
         type=str,
         required=True,
         help="path to legacy model",
@@ -70,6 +75,12 @@ if __name__ == "__main__":
         default="csr",
         choices=["csr"],
         help="Sparse strategy storage. Options: csr, ptcsr, auto.\nCSR - Compressed Sparse Rows\nPTCSR - Alternative storage format\noptimize_latency - Use the current GPU to determine the optimal storage format to reduce kernel latency",
+    )
+    parser.add_argument(
+        "--tensor_type",
+        required=True,
+        choices=["legacy", "compressed"],
+        help="path to legacy model",
     )
     parser.add_argument(
         "--save_per_layer",
@@ -87,18 +98,20 @@ if __name__ == "__main__":
     args, leftovers = parser.parse_known_args()
 
     # For example, experiment0.8
-    legacy_model_name = Path(args.legacy_model_path).parts[-1]
+    tensors_path = Path(args.tensors_path).parts[-1]
+
+    is_legacy = args.tensor_type == 'legacy'
 
     # For example, outputs/experiment0.8
     # output_path = os.path.join(args.save_per_layer, legacy_model_name)
 
     if args.save_per_layer is not None:
-        for p in os.listdir(args.legacy_model_path):
-            if not os.path.isdir(os.path.join(args.legacy_model_path, p)): continue
+        for p in os.listdir(args.tensors_path):
+            if not os.path.isdir(os.path.join(args.tensors_path, p)): continue
 
             # Now p is one of 0, 1, ...
 
-            layer_path = os.path.join(args.legacy_model_path, p)
+            layer_path = os.path.join(args.tensors_path, p)
 
             for tensor_path in os.listdir(layer_path):
                 sublayer_path = os.path.join(layer_path, tensor_path)
@@ -126,7 +139,7 @@ if __name__ == "__main__":
 
 
     if args.torch_pt_path:
-        not_quantized_weights_path = os.path.join(args.legacy_model_path, "not_quantized_weights.pt")
+        not_quantized_weights_path = os.path.join(args.tensors_path, "not_quantized_weights.pt")
         not_quantized_weights = torch.load(not_quantized_weights_path)
         for w in not_quantized_weights.values():
             w.requires_grad = False
@@ -134,7 +147,8 @@ if __name__ == "__main__":
 
         replace_and_save_quantized_layers(
             model,
-            args.legacy_model_path
+            args.tensors_path,
+            is_legacy
         )
         torch.save(model, args.torch_pt_path)
 
