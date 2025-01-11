@@ -38,10 +38,12 @@ def replace_and_save_quantized_layers(
             assert m.bias is None
             tensor_path = os.path.join(legacy_model_path, f"{layer_id}", f"{parent_tensor_name}.{tensor_name}")
             if os.path.exists(tensor_path):
+                print(tensor_path)
                 if is_legacy:
                     ds_legacy = load_legacy_tensor(tensor_path)
                     ds_module = SparsifiedLinear.from_legacy(ds_legacy, 'cpu')
                 else:
+                    print(tensor_path)
                     ds_module = torch.load(tensor_path, 'cpu')
                 setattr(current_model, tensor_name, ds_module)
         else:
@@ -144,7 +146,6 @@ if __name__ == "__main__":
         # for w in not_quantized_weights.values():
         #     w.requires_grad = False
         # model.load_state_dict(not_quantized_weights, strict=False)
-
         replace_and_save_quantized_layers(
             model,
             args.tensors_path,

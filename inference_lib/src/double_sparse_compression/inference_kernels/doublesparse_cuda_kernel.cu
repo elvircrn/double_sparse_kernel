@@ -179,36 +179,37 @@ __global__ void doublesparse(int m, int n, int k,
 
   auto row = blockIdx.x * WARP_COUNT + warp_id;
 
+  u32 available_warps{};
+
   if constexpr (!PHASE) {
+    available_warps = min(WARP_COUNT, non_zero_rows - blockIdx.x * WARP_COUNT);
     if (row >= non_zero_rows) {
       return;
     }
   } else {
+    available_warps = min(WARP_COUNT, m - blockIdx.x * WARP_COUNT);
     if (row >= m) {
       return;
     }
   }
 
+  unsigned int row_to_load = row + threadIdx.x;
+
   if constexpr (!PHASE) {
-    if (threadIdx.x < WARP_COUNT) {
-      s_row_offsets[threadIdx.x] = b_row_offsets[row + threadIdx.x];
-    }
-    if (threadIdx.x == WARP_COUNT) {
-      s_row_offsets[threadIdx.x] = b_row_offsets[row + threadIdx.x];
+    if (threadIdx.x <= WARP_COUNT && row_to_load <= non_zero_rows) {
+      // Bug is here?
+      s_row_offsets[threadIdx.x] = b_row_offsets[row_to_load];
     }
   } else {
-    if (threadIdx.x < WARP_COUNT) {
-      s_row_offsets[threadIdx.x] = a_row_offsets[row + threadIdx.x];
-    }
-    if (threadIdx.x == WARP_COUNT) {
-      s_row_offsets[threadIdx.x] = a_row_offsets[row + threadIdx.x];
+    if (threadIdx.x <= WARP_COUNT && row_to_load <= m) {
+      s_row_offsets[threadIdx.x] = a_row_offsets[row_to_load];
     }
   }
 
   __syncthreads();
-  auto b_row_start = s_row_offsets[warp_id];
-  auto b_row_end = s_row_offsets[warp_id + 1];
-  auto b_row_ptr = b_row_start + lane_id;
+  auto row_start = s_row_offsets[warp_id];
+  auto row_end = s_row_offsets[warp_id + 1];
+  auto row_ptr = row_start + lane_id;
 
 
   float acc{};
@@ -223,16 +224,17 @@ __global__ void doublesparse(int m, int n, int k,
   }
 
 
+  u32 avilable_threads = available_warps * WARP_SIZE;
   if (pages == 1) {
 #ifndef SKIP_XLOAD
     if constexpr (!PHASE) {
       auto x2_to_load = n / 2;
-      for (int i = threadIdx.x; i < x2_to_load; i += blockDim.x) {
+      for (int i = threadIdx.x; i < x2_to_load; i += avilable_threads) {
         s_x2[i] = x2[i];
       }
     } else {
       auto x2_to_load = non_zero_rows;
-      for (int i = threadIdx.x; i < x2_to_load; i += blockDim.x) {
+      for (int i = threadIdx.x; i < x2_to_load; i += avilable_threads) {
         reinterpret_cast<float *>(s_x2)[i] = workspace[i];
       }
     }
@@ -242,10 +244,10 @@ __global__ void doublesparse(int m, int n, int k,
 
     __syncthreads();
 
-    for (; b_row_ptr < b_row_end; b_row_ptr += WARP_SIZE) {
+    for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
       // We ran out of x.
 #if DISABLE_LDCS
-      ColVal col_val = col_vals[b_row_ptr];
+      ColVal col_val = col_vals[row_ptr];
 #else
       ColVal col_val{
           ._ = __ldcs(reinterpret_cast<const u32*>(col_vals) + b_row_ptr)
@@ -266,13 +268,13 @@ __global__ void doublesparse(int m, int n, int k,
       if constexpr (!PHASE) {
         auto x2_to_load = n / 2 - page_offset;
         const u32 x_limit = min(smem_size_fp32, x2_to_load);
-        for (int i = threadIdx.x; i < x_limit; i += blockDim.x) {
+        for (int i = threadIdx.x; i < x_limit; i += avilable_threads) {
           s_x2[i] = x2[i];
         }
       } else {
         auto x2_to_load = non_zero_rows - page_offset;
         const u32 x_limit = min(smem_size_fp32, x2_to_load);
-        for (int i = threadIdx.x; i < x_limit; i += blockDim.x) {
+        for (int i = threadIdx.x; i < x_limit; i += avilable_threads) {
           reinterpret_cast<float *>(s_x2)[i] = workspace[i];
         }
       }
@@ -288,15 +290,9 @@ __global__ void doublesparse(int m, int n, int k,
         column_limit = smem_size_fp32 * (page + 1);
       }
 
-      for (; b_row_ptr < b_row_end; b_row_ptr += WARP_SIZE) {
+      for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
         // We ran out of x.
-#if DISABLE_LDCS
-        ColVal col_val = col_vals[b_row_ptr];
-#else
-        ColVal col_val{
-            ._ = __ldcs(reinterpret_cast<const u32*>(col_vals) + b_row_ptr)
-        };
-#endif
+        ColVal col_val = col_vals[row_ptr];
 
         if (col_val.members.c >= column_limit) {
           break;

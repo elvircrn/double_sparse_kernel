@@ -94,8 +94,8 @@ class TestSparseFp16Easy(unittest.TestCase):
         for m in [4096, 11008]:
             for n in [4096, 11008]:
                 for k in [11008, 4096]:
-                    for batch_size in [1, 2]:
-                        for density in [0.1]:
+                    for batch_size in [1, 2, 10]:
+                        for density in [0.1, 0.3, 0.9]:
                             for flag in [
                                 FeatureFlags.CSR,
                             ]:

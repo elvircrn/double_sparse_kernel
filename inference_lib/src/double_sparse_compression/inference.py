@@ -11,6 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+import sys
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 
@@ -176,7 +177,12 @@ class SparsifiedLinear(torch.nn.Module):
             y,
             y
         )
-        import pdb; pdb.set_trace()
+        if False:
+            if y.isnan().any():
+                torch.save(x, '/tmp/x.pt')
+                torch.save(self, '/tmp/w.pt')
+                sys.exit(1)
+                pass
         return y.view((1, self.m, batch_size)).transpose(1, 2)
 
 

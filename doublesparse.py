@@ -36,7 +36,8 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
         b_plus_u = (B + U)
         b_plus_u_abs = b_plus_u.abs()
         if itt < prune_iters and fixmask is None:
-            thres = b_plus_u_abs.flatten().sort()[0][int(B.numel() * bsparsity)]
+            values, _ = torch.topk(b_plus_u_abs.flatten(), int(B.numel() * bsparsity), largest=False, sorted=True)
+            thres = values[-1]
             mask = (b_plus_u_abs > thres)
         if fixmask is not None:
             assert fixmask.shape == Z.shape
@@ -44,7 +45,7 @@ def find_other2(A, W, nnz, Z, U, print_sc=None, debug=False, reg=0, rho_start=0.
 
         Z = b_plus_u * mask
         U += B - Z
-        B = XXinv @ (XY + (Z - U))
+        B = XXinv @ (XY + Z - U)
 
     return Z / norm2.unsqueeze(1), U / norm2.unsqueeze(1)
 
