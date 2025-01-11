@@ -222,6 +222,15 @@ def llama_eval(model, testenc, dev, dataset: str, log_wandb: bool = False):
         print(i)
         layer = layers[i].to(dev)
 
+        if args.gmp:
+            subset = find_layers(layer)
+            for name in subset:
+                W = subset[name].weight.data
+                thresh = torch.sort(torch.abs(W.flatten()))[0][
+                    int(W.numel() * args.sparsity)
+                ]
+                W.data[torch.abs(W.data) <= thresh] = 0
+
         for j in range(nsamples):
             outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
         layers[i] = layer.cpu()
@@ -264,11 +273,13 @@ if __name__ == "__main__":
     nsamples = 1
     seed = 0
     dataset = 'wikitext2'
-    model = torch.load('/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/double_sparse_data/doublesparse_csr_0.77.pt')
+    model = torch.load(sys.argv[1])
     model.eval()
+    model = model.to(device=DEV)
     model.seqlen = seqlen
 
-    model_name = '/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/Llama-2-7b-hf'
+    # model_name = '/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/Llama-2-7b-hf'
+    model_name = sys.argv[2]
     dataloader, testloader = get_loaders(
         dataset, nsamples=nsamples, seed=seed, model=model_name, seqlen=seqlen
     )
