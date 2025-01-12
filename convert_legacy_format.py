@@ -43,7 +43,6 @@ def replace_and_save_quantized_layers(
                     ds_legacy = load_legacy_tensor(tensor_path)
                     ds_module = SparsifiedLinear.from_legacy(ds_legacy, 'cpu')
                 else:
-                    print(tensor_path)
                     ds_module = torch.load(tensor_path, 'cpu')
                 setattr(current_model, tensor_name, ds_module)
         else:

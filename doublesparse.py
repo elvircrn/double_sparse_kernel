@@ -318,6 +318,7 @@ class DoubleSparse:
             DoubleSparseLegacy(m, n, k, self.A, self.B),
             self.layer.weight.device
         )
+
         self.layer = sparsified_linear
         if DEBUG:
             print(torch.sum((self.layer(self.inp1) - self.out1) ** 2))

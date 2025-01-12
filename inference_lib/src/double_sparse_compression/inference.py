@@ -66,8 +66,26 @@ class SparsifiedLinear(torch.nn.Module):
         self.b_col_vals = nn.Parameter(b_col_vals, requires_grad=False)
         self.non_zero_rows = non_zero_rows
 
+
     @staticmethod
     def from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
+        a_sparse = double_sparse_legacy.a
+        b_sparse = double_sparse_legacy.b
+        non_zero_row_count = double_sparse_legacy.k
+        mod = SparsifiedLinear(
+            double_sparse_legacy.m,
+            double_sparse_legacy.n,
+            double_sparse_legacy.k,
+            a_sparse.crow_indices().int(),
+            merge_col_val(a_sparse.col_indices().short(), a_sparse.values().half()),
+            b_sparse.crow_indices().int(),
+            merge_col_val(b_sparse.col_indices().short(), b_sparse.values().half()),
+            non_zero_row_count
+        )
+        return mod.to(device=device)
+
+    @staticmethod
+    def _from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
         IS_CSC = False
         b_sparse = double_sparse_legacy.b
         b_row_offsets = b_sparse.crow_indices()
@@ -173,7 +191,7 @@ class SparsifiedLinear(torch.nn.Module):
             self.non_zero_rows,
             batch_size,
             x.flatten().contiguous(),
-            FeatureFlags.CSR_ASYNC,
+            FeatureFlags.CSR,
             y,
             y
         )
@@ -183,7 +201,7 @@ class SparsifiedLinear(torch.nn.Module):
                 torch.save(self, '/tmp/w.pt')
                 sys.exit(1)
                 pass
-        return y.view((1, self.m, batch_size)).transpose(1, 2)
+        return y.re((1, batch_size, self.m))
 
 
 def updiv(x, y):
@@ -195,11 +213,14 @@ def updiv(x, y):
 
 ASYNC = 1 << 0
 IS_CSC = 1 << 1
+IS_NAIVE = 1 << 3
 
 class FeatureFlags(IntEnum):
     CSR = 0
     CSC = IS_CSC
     CSR_ASYNC = CSR | ASYNC
+    CSR_NAIVE = CSR | IS_NAIVE
+    CSR_NAIVE_ASYNC = CSR | IS_NAIVE | ASYNC
 
     def pretty(self):
         if self.value == self.CSR:

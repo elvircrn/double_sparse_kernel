@@ -170,17 +170,18 @@ if __name__ == "__main__":
 
     m = Mode(args.execution_mode)
 
+    max_new_tokens = 4
     with torch.no_grad():
         model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m)
-        text = "The recipe "  # input()
+        text = "Barack Obama was born in Honolulu "  # input()
         s = time.time()
-        generated_text, timings_s = model.generate(text, max_new_tokens=128)
+        generated_text, timings_s = model.generate(text, max_new_tokens=max_new_tokens)
         e = time.time()
         print(f"{generated_text}")
 
         print(f"Total duration = {e - s}s")
 
-        durations = np.array(timings_s[16:])
+        durations = np.array(timings_s[(max_new_tokens // 4):])
 
         print(f"Mean duration after caching initial input = {durations.mean()}")
         print(f"Median duration after caching initial input = {np.median(durations)}")
