@@ -270,7 +270,7 @@ __global__ void doublesparse(int m, int n, int k,
   auto s_x = reinterpret_cast<half *>(s_x2);
 
   float *workspace = _workspace + blockIdx.y * k;
-  const half2 *x2 = reinterpret_cast<const half2 *>(x + blockIdx.y * n / 2);
+  const half2 *x2 = reinterpret_cast<const half2 *>(x + blockIdx.y * n);
 
   const auto warp_id = threadIdx.x / WARP_SIZE;
   auto lane_id = threadIdx.x & 0x1f;
@@ -317,42 +317,27 @@ __global__ void doublesparse(int m, int n, int k,
     col_vals = a_col_vals;
   }
 
-
   u32 avilable_threads = available_warps * WARP_SIZE;
   if (pages == 1) {
-#ifndef SKIP_XLOAD
-    if constexpr (!PHASE) {
-      auto x2_to_load = n / 2;
-      for (int i = threadIdx.x; i < x2_to_load; i += avilable_threads) {
+    auto x2_to_load = !PHASE ? (n / 2) : non_zero_rows;
+    for (int i = threadIdx.x; i < x2_to_load; i += avilable_threads) {
+      if constexpr (!PHASE) {
         s_x2[i] = x2[i];
-      }
-    } else {
-      auto x2_to_load = non_zero_rows;
-      for (int i = threadIdx.x; i < x2_to_load; i += avilable_threads) {
+      } else {
         reinterpret_cast<float *>(s_x2)[i] = workspace[i];
       }
     }
-#endif
-
-#define DISABLE_LDCS 1
 
     __syncthreads();
 
     for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
       // We ran out of x.
-#if DISABLE_LDCS
       ColVal col_val = col_vals[row_ptr];
-#else
-      ColVal col_val{
-          ._ = __ldcs(reinterpret_cast<const u32*>(col_vals) + b_row_ptr)
-      };
-#endif
-
-      auto local_c = col_val.members.c;
+      auto v = __half2float(col_val.members.v);
       if constexpr (!PHASE) {
-        acc += __half2float(s_x[local_c]) * __half2float(col_val.members.v);
+        acc += __half2float(s_x[col_val.members.c]) * v;
       } else {
-        acc += reinterpret_cast<float *>(s_x2)[local_c] * __half2float(col_val.members.v);
+        acc += reinterpret_cast<float *>(s_x2)[col_val.members.c] * v;
       }
     }
   } else {
@@ -551,7 +536,7 @@ __global__ void doublesparse_csc(int m, int n, int k,
 
 
 #define KERNEL_CALL \
-    if (!features.flags.is_csc) { \
+    if (!features.flags.is_csc && !features.flags.is_naive) { \
       CALL_DOUBLE_MATMUL(0, std::min(1 << 13, n / 2), doublesparse); \
       CALL_DOUBLE_MATMUL(1, std::min(1 << 13, k), doublesparse); \
     } else if (features.flags.is_naive) {                            \

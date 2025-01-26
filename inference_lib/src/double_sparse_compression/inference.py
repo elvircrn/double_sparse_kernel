@@ -179,7 +179,7 @@ class SparsifiedLinear(torch.nn.Module):
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
         """
         batch_size = x.shape[1]
-        y = torch.zeros(batch_size * self.m, dtype=torch.float16, device=x.device).contiguous()
+        y = torch.zeros((1, batch_size, self.m), dtype=torch.half, device=x.device)
         get_doublesparse_mul()(
             self.m,
             self.n,
@@ -191,17 +191,11 @@ class SparsifiedLinear(torch.nn.Module):
             self.non_zero_rows,
             batch_size,
             x.flatten().contiguous(),
-            FeatureFlags.CSR,
+            FeatureFlags.CSR_ASYNC,
             y,
             y
         )
-        if False:
-            if y.isnan().any():
-                torch.save(x, '/tmp/x.pt')
-                torch.save(self, '/tmp/w.pt')
-                sys.exit(1)
-                pass
-        return y.re((1, batch_size, self.m))
+        return y
 
 
 def updiv(x, y):
