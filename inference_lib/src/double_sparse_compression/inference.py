@@ -68,7 +68,7 @@ class SparsifiedLinear(torch.nn.Module):
 
 
     @staticmethod
-    def from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
+    def _from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
         a_sparse = double_sparse_legacy.a
         b_sparse = double_sparse_legacy.b
         non_zero_row_count = double_sparse_legacy.k
@@ -85,7 +85,7 @@ class SparsifiedLinear(torch.nn.Module):
         return mod.to(device=device)
 
     @staticmethod
-    def _from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
+    def from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
         IS_CSC = False
         b_sparse = double_sparse_legacy.b
         b_row_offsets = b_sparse.crow_indices()
@@ -110,7 +110,7 @@ class SparsifiedLinear(torch.nn.Module):
                 double_sparse_legacy.m,
                 double_sparse_legacy.n,
                 double_sparse_legacy.k,
-                a_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
+                a_sparse.crow_indices().int(),
                 merge_col_val(a_sparse.col_indices().short(), a_sparse.values().half()),
                 b_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
                 merge_col_val(b_sparse.col_indices().short(), b_sparse.values().half()),
@@ -177,10 +177,11 @@ class SparsifiedLinear(torch.nn.Module):
         a for loop is used which is horribly inefficient, but will do for now.
         @param x: Input tensor.
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
-        """
+        """ 
+        if not hasattr(self, 'K'): self.K = get_doublesparse_mul()
         batch_size = x.shape[1]
-        y = torch.zeros((1, batch_size, self.m), dtype=torch.half, device=x.device)
-        get_doublesparse_mul()(
+        y = torch.zeros((1, batch_size, self.m), dtype=torch.float16, device=x.device)
+        self.K(
             self.m,
             self.n,
             self.k,
@@ -190,7 +191,7 @@ class SparsifiedLinear(torch.nn.Module):
             self.b_col_vals,
             self.non_zero_rows,
             batch_size,
-            x.flatten().contiguous(),
+            x,
             FeatureFlags.CSR_ASYNC,
             y,
             y

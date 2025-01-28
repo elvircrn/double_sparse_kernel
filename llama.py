@@ -151,6 +151,11 @@ def llama_sequential(model, dataloader, dev, save):
                     os.makedirs(folder_path, exist_ok=True)
                     full_path = os.path.join(folder_path, name)
                     torch.save(sparsified_linear, full_path)
+                    try: 
+                        t = torch.load(full_path, 'cpu')
+                    except:
+                        import pdb; pdb.set_trace()
+
                 gpts[name].free()
 
         outs = torch.zeros_like(inps)

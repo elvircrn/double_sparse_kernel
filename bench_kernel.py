@@ -12,12 +12,21 @@ from double_sparse_compression import SparsifiedLinear
 from double_sparse_compression.inference import FeatureFlags
 from double_sparse_compression.inference_kernels.kernel_selector import get_doublesparse_mul_timer
 
-cutlass_str = """m,n,k,Runtime
+cutlass_str_rtx4060 = """m,n,k,Runtime
 11008,11008,1,1.04251
 11008,4096,1,0.395374
 4096,11008,1,0.385591
 4096,4096,1,0.148815
 """
+
+cutlass_str_a100 = """Problem,Provider,OperationKind,Operation,Disposition,Status,gemm_kind,m,n,k,A,B,C,D,alpha,beta,split_k_mode,split_k_slices,batch_count,raster_order,swizzle_size,op_class,accum,cta_m,cta_n,cta_k,cluster_m,cluster_n,cluster_k,stages,warps_m,warps_n,warps_k,inst_m,inst_n,inst_k,min_cc,max_cc,Bytes,Flops,Flops/Byte,Runtime,GB/s,GFLOPs
+1,CUTLASS,gemm,cutlass_tensorop_f16_s16816gemm_f16_256x128_32x3_nt_align8,passed,success,universal,4096,4096,1,f16:column,f16:row,f16:column,f16:column,1,0,serial,1,1,heuristic,1,tensorop,f32,256,128,32,1,1,1,3,4,2,1,16,8,16,80,1024,33570816,67108864,1,0.0355419,832.81,1787.57
+2,CUTLASS,gemm,cutlass_tensorop_f16_s16816gemm_f16_256x128_32x3_nt_align8,passed,success,universal,11008,4096,1,f16:column,f16:row,f16:column,f16:column,1,0,serial,1,1,heuristic,1,tensorop,f32,256,128,32,1,1,1,3,4,2,1,16,8,16,80,1024,90207744,180355072,1,0.0829795,944.179,2026.93
+3,CUTLASS,gemm,cutlass_tensorop_f16_s16816gemm_f16_256x128_32x3_nt_align8,passed,success,universal,4096,11008,1,f16:column,f16:row,f16:column,f16:column,1,0,serial,1,1,heuristic,1,tensorop,f32,256,128,32,1,1,1,3,4,2,1,16,8,16,80,1024,90207744,180355072,1,0.0835365,938.304,2014.32
+4,CUTLASS,gemm,cutlass_tensorop_f16_s16816gemm_f16_256x128_32x3_nt_align8,passed,success,universal,11008,11008,1,f16:column,f16:row,f16:column,f16:column,1,0,serial,1,1,heuristic,1,tensorop,f32,256,128,32,1,1,1,3,4,2,1,16,8,16,80,1024,242396160,484704256,1,0.181715,1242.32,2667.39
+"""
+
+cutlass_str = # Set for the specific GPU here
 
 cutlass_data = io.StringIO(cutlass_str)
 cutlass_runs = pd.read_csv(cutlass_data)

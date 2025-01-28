@@ -9,7 +9,7 @@ SPQR_CUDA = load(
     sources=[os.path.join(CUDA_FOLDER, "doublesparse_cuda.cpp"),
              os.path.join(CUDA_FOLDER, "doublesparse_cuda_kernel.cu")],
     extra_cflags=["-O3"],
-    extra_cuda_cflags=["-arch=native -lineinfo"]
+    extra_cuda_cflags=["-arch=native -O3"]
 )
 
 torch.library.define(
@@ -32,3 +32,8 @@ def call_doublesparse_mul(*args):
 
 def call_doublesparse_mul_timer(*args):
     return torch.ops.doublesparse_cuda.doublesparse_mul_timer(*args)
+
+
+@torch.library.register_fake("doublesparse_cuda::doublesparse_mul")
+def spqr_mul_meta(m, n, k, a_row_offsets, a_col_vals, b_row_offsets, b_col_vals, non_zero_rows, batch_size, x, f, Y, out):
+    return
