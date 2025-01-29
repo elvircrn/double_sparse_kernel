@@ -26,7 +26,7 @@ cutlass_str_a100 = """Problem,Provider,OperationKind,Operation,Disposition,Statu
 4,CUTLASS,gemm,cutlass_tensorop_f16_s16816gemm_f16_256x128_32x3_nt_align8,passed,success,universal,11008,11008,1,f16:column,f16:row,f16:column,f16:column,1,0,serial,1,1,heuristic,1,tensorop,f32,256,128,32,1,1,1,3,4,2,1,16,8,16,80,1024,242396160,484704256,1,0.181715,1242.32,2667.39
 """
 
-cutlass_str = # Set for the specific GPU here
+cutlass_str = cutlass_str_rtx4060 # Set for the specific GPU here
 
 cutlass_data = io.StringIO(cutlass_str)
 cutlass_runs = pd.read_csv(cutlass_data)
@@ -104,10 +104,10 @@ if __name__ == "__main__":
             FeatureFlags.CSR,
         ]
 
-        f.write("Layer;Tensor Name;M;N;K")
+        f.write("Layer;Tensor Name;M;N;K;Dense (FP16)")
 
-        for method in [FeatureFlags.CSC] + methods:
-            f.write(f";{method.pretty()} CSR (ms)")
+        for method in methods:
+            f.write(f";{method.pretty()} (ms)")
 
         f.write("\n")
 
