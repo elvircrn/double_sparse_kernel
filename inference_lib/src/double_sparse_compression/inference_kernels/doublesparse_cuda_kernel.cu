@@ -165,7 +165,8 @@ __global__ void doublesparse_naive(int m, int n, int k,
                                    const half *__restrict__ _x,
                                    half *_y,
                                    float *__restrict__ _workspace,
-                                   u32 smem_size_fp32) {
+                                   u32 smem_size_fp32,
+                                   int global_row_offset = 0) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
 
@@ -262,7 +263,8 @@ __global__ void doublesparse(int m, int n, int k,
                              const half *__restrict__ x,
                              half *_y,
                              float *__restrict__ _workspace,
-                             u32 smem_size_fp32) {
+                             u32 smem_size_fp32,
+                             int global_row_offset = 0) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
 
@@ -519,7 +521,7 @@ __global__ void doublesparse_csc(int m, int n, int k,
   acc = reduce_final(acc);
 }
 
-#define CALL_DOUBLE_MATMUL(P, SMEM_SIZE_FP32, K) K<P, WARP_COUNT><<<dim3(updiv((!P ? non_zero_rows : m), WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), stream>>>(m, n, k, \
+#define CALL_DOUBLE_MATMUL(P, SMEM_SIZE_FP32, K, given_stream, global_offset) K<P, WARP_COUNT><<<dim3(updiv((!P ? non_zero_rows : m), WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), given_stream>>>(m, n, k, \
                                                                                 (u32 *) a_row_offsets, \
                                                                                 (ColVal *) a_col_vals, \
                                                                                 (u32 *) b_row_offsets, \
@@ -529,7 +531,8 @@ __global__ void doublesparse_csc(int m, int n, int k,
                                                                                 (half *) X, \
                                                                                 (half *) y,                               \
                                                                                 d_workspace,                                                                                           \
-                                                           SMEM_SIZE_FP32)
+                                                           SMEM_SIZE_FP32,                                                                                                                                                                      \
+                                                           global_offset)
 
 #define CALL_DOUBLE_MATMUL_CSC(P, SMEM_SIZE_FP32) doublesparse_csc<WARP_COUNT><<<dim3(updiv(!P ? non_zero_rows : m, WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), stream>>>(m, n, k, \
                                                                                 (u32 *) a_row_offsets, \
@@ -546,11 +549,11 @@ __global__ void doublesparse_csc(int m, int n, int k,
 
 #define KERNEL_CALL \
     if (!features.flags.is_csc && !features.flags.is_naive) { \
-      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse); \
-      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse); \
+      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse, stream, 0); \
+      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse, stream, 0); \
     } else if (features.flags.is_naive) {                            \
-      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse_naive); \
-      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse_naive); \
+      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse_naive, stream, 0); \
+      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse_naive, stream, 0); \
     } else { \
       CALL_DOUBLE_MATMUL_CSC(0, std::min((1 << 13), updiv(n, 2))); \
       CALL_DOUBLE_MATMUL_CSC(1, std::min((1 << 13), k)); \
@@ -586,6 +589,10 @@ int doublesparse_matmul(
     cudaDeviceSynchronize();
   }
 
+  cudaStream_t stream1, stream2;
+  cudaStreamCreate(&stream1);
+  cudaStreamCreate(&stream2);
+
   constexpr
   u32 NUM_RUNS = 500;
   constexpr
@@ -616,6 +623,8 @@ int doublesparse_matmul(
   }
 
   cudaFree(d_workspace);
+  cudaStreamDestroy(stream1);
+  cudaStreamDestroy(stream2);
 
   return 0;
 }
