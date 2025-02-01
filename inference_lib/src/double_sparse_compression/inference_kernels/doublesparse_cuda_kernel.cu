@@ -171,8 +171,6 @@ __global__ void doublesparse_naive(int m, int n, int k,
 
   const half *x = _x + blockIdx.y * n;
   half *y = _y + blockIdx.y * m;
-  u32 smem_size_fp16 = smem_size_fp32 * 2;
-  auto s_x = reinterpret_cast<half *>(s_x2);
 
   float *workspace_out = _workspace + blockIdx.y * k;
   float *workspace_in = _workspace + blockIdx.y * k;
@@ -206,14 +204,13 @@ __global__ void doublesparse_naive(int m, int n, int k,
   }
 
   __syncthreads();
+
   auto row_start = s_row_offsets[warp_id];
   auto row_end = s_row_offsets[warp_id + 1];
   auto row_ptr = row_start + lane_id;
 
 
   float acc{};
-  // Pages of x strips.
-  auto pages = !PHASE ? updiv(n / 2, smem_size_fp32) : updiv(non_zero_rows, smem_size_fp32);
 
   const ColVal *col_vals;
   if constexpr (!PHASE) {
@@ -232,7 +229,11 @@ __global__ void doublesparse_naive(int m, int n, int k,
       if constexpr (!PHASE) {
         acc += __half2float(x[local_c]) * __half2float(col_val.members.v);
       } else {
-        acc += workspace_in[local_c] * __half2float(col_val.members.v);
+        if (col_val.members.c < non_zero_rows) {
+          acc += workspace_in[local_c] * __half2float(col_val.members.v);
+        } else {
+          break;
+        }
       }
     }
   }
@@ -291,20 +292,18 @@ __global__ void doublesparse(int m, int n, int k,
     }
   }
 
-  unsigned int row_to_load = row + threadIdx.x;
+  int row_to_load = (blockIdx.x * WARP_COUNT) + threadIdx.x;
+  int rows_to_load = min(WARP_COUNT, ((!PHASE ? non_zero_rows : m) - blockIdx.x * WARP_COUNT));
 
   const u32 *row_offsets = !PHASE ? b_row_offsets : a_row_offsets;
 
-  if (threadIdx.x <= WARP_COUNT && row_to_load <= (!PHASE ? non_zero_rows : m)) {
-    // Bug is here?
+  if (threadIdx.x < WARP_COUNT && row_to_load < (blockIdx.x * WARP_COUNT) + rows_to_load) {
     s_row_offsets[threadIdx.x] = row_offsets[row_to_load];
   }
 
-  __syncthreads();
-  auto row_start = s_row_offsets[warp_id];
-  auto row_end = s_row_offsets[warp_id + 1];
-  auto row_ptr = row_start + lane_id;
-
+  if (!threadIdx.x) {
+    s_row_offsets[rows_to_load] = row_offsets[blockIdx.x * WARP_COUNT + rows_to_load];
+  }
 
   float acc{};
   // Pages of x strips.
@@ -318,6 +317,7 @@ __global__ void doublesparse(int m, int n, int k,
   }
 
   u32 avilable_threads = available_warps * WARP_SIZE;
+
   if (pages == 1) {
     auto x2_to_load = !PHASE ? (n / 2) : non_zero_rows;
     for (int i = threadIdx.x; i < x2_to_load; i += avilable_threads) {
@@ -330,6 +330,10 @@ __global__ void doublesparse(int m, int n, int k,
 
     __syncthreads();
 
+    int row_start = s_row_offsets[warp_id];
+    int row_end = s_row_offsets[warp_id + 1];
+    auto row_ptr = row_start + lane_id;
+
     for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
       // We ran out of x.
       ColVal col_val = col_vals[row_ptr];
@@ -341,23 +345,31 @@ __global__ void doublesparse(int m, int n, int k,
       }
     }
   } else {
+    __syncthreads();
+
+    auto row_start = s_row_offsets[warp_id];
+    auto row_end = s_row_offsets[warp_id + 1];
+    auto row_ptr = row_start + lane_id;
+
     for (int page = 0; page < pages; page++) {
       const u32 page_offset = page * smem_size_fp32;
-#ifndef SKIP_XLOAD
+
+      __syncthreads();
+
+      int x_limit{};
       if constexpr (!PHASE) {
         auto x2_to_load = n / 2 - page_offset;
-        const u32 x_limit = min(smem_size_fp32, x2_to_load);
+        x_limit = min(smem_size_fp32, x2_to_load);
         for (int i = threadIdx.x; i < x_limit; i += avilable_threads) {
           s_x2[i] = x2[i];
         }
       } else {
         auto x2_to_load = non_zero_rows - page_offset;
-        const u32 x_limit = min(smem_size_fp32, x2_to_load);
+        x_limit = min(smem_size_fp32, x2_to_load);
         for (int i = threadIdx.x; i < x_limit; i += avilable_threads) {
-          reinterpret_cast<float *>(s_x2)[i] = workspace[i];
+          reinterpret_cast<float *>(s_x2)[i] = workspace[page_offset + i];
         }
       }
-#endif
 
       __syncthreads();
 
@@ -386,12 +398,9 @@ __global__ void doublesparse(int m, int n, int k,
         }
       }
 
-      __syncthreads();
-
       x2 += smem_size_fp32;
     }
   }
-
 
   acc = reduce_final(acc);
 
@@ -510,7 +519,7 @@ __global__ void doublesparse_csc(int m, int n, int k,
   acc = reduce_final(acc);
 }
 
-#define CALL_DOUBLE_MATMUL(P, SMEM_SIZE_FP32, K) K<P, WARP_COUNT><<<dim3(updiv(!P ? non_zero_rows : m, WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), stream>>>(m, n, k, \
+#define CALL_DOUBLE_MATMUL(P, SMEM_SIZE_FP32, K) K<P, WARP_COUNT><<<dim3(updiv((!P ? non_zero_rows : m), WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), stream>>>(m, n, k, \
                                                                                 (u32 *) a_row_offsets, \
                                                                                 (ColVal *) a_col_vals, \
                                                                                 (u32 *) b_row_offsets, \
@@ -537,14 +546,14 @@ __global__ void doublesparse_csc(int m, int n, int k,
 
 #define KERNEL_CALL \
     if (!features.flags.is_csc && !features.flags.is_naive) { \
-      CALL_DOUBLE_MATMUL(0, std::min(1 << 13, n / 2), doublesparse); \
-      CALL_DOUBLE_MATMUL(1, std::min(1 << 13, k), doublesparse); \
+      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse); \
+      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse); \
     } else if (features.flags.is_naive) {                            \
-      CALL_DOUBLE_MATMUL(0, std::min(1 << 13, n / 2), doublesparse_naive); \
-      CALL_DOUBLE_MATMUL(1, std::min(1 << 13, k), doublesparse_naive); \
+      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse_naive); \
+      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse_naive); \
     } else { \
-      CALL_DOUBLE_MATMUL_CSC(0, std::min(1 << 13, n / 2)); \
-      CALL_DOUBLE_MATMUL_CSC(1, std::min(1 << 13, k)); \
+      CALL_DOUBLE_MATMUL_CSC(0, std::min((1 << 13), updiv(n, 2))); \
+      CALL_DOUBLE_MATMUL_CSC(1, std::min((1 << 13), k)); \
     }               \
 
 
@@ -569,11 +578,10 @@ int doublesparse_matmul(
   float *d_workspace;
   if (features.flags.is_csc) {
     cudaMalloc(reinterpret_cast<void **>(&d_workspace), sizeof(float) * k * batch_size);
-    cudaMemset(d_workspace, 0, k * batch_size);
+    cudaMemset(d_workspace, 0, sizeof(float) * k * batch_size);
     cudaDeviceSynchronize();
   } else {
     cudaMalloc(reinterpret_cast<void **>(&d_workspace), sizeof(float) * k * batch_size);
-    // TODO: Remove?
     cudaMemset(d_workspace, 0, k * batch_size);
     cudaDeviceSynchronize();
   }

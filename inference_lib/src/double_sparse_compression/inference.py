@@ -88,22 +88,24 @@ class SparsifiedLinear(torch.nn.Module):
     def from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
         IS_CSC = False
         b_sparse = double_sparse_legacy.b
-        b_row_offsets = b_sparse.crow_indices()
 
-        row_counts = torch.diff(b_row_offsets)
-        non_zero_row_count = (row_counts != 0).sum().item()
-
-        row_ids = row_counts.argsort()
-        row_ids = row_ids[row_counts[row_ids] != 0]
-
-        a_dense = double_sparse_legacy.a.to_dense()[:, row_ids]
-        b_dense = b_sparse.to_dense()[row_ids, :]
-
-        if IS_CSC:
-            a_sparse = a_dense.t().to_sparse_csr()
+        if True:
+            b_row_offsets = b_sparse.crow_indices()
+            row_counts = torch.diff(b_row_offsets)
+            non_zero_row_count = (row_counts != 0).sum().item()
+            row_ids = row_counts.argsort(descending=True)
+            a_dense = double_sparse_legacy.a.to_dense()[:, row_ids]
+            a_dense[:, non_zero_row_count:] = 0
+            b_dense = b_sparse.to_dense()[row_ids, :]
+            if IS_CSC:
+                a_sparse = a_dense.t().to_sparse_csr()
+            else:
+                a_sparse = a_dense.to_sparse_csr()
+            b_sparse = b_dense.to_sparse_csr()
         else:
-            a_sparse = a_dense.to_sparse_csr()
-        b_sparse = b_dense.to_sparse_csr()
+            a_sparse = double_sparse_legacy.a.to_dense().to_sparse_csr()
+            b_sparse = double_sparse_legacy.b.to_dense().to_sparse_csr()
+            non_zero_row_count = double_sparse_legacy.k
 
         if IS_CSC:
             mod = SparsifiedLinear(
