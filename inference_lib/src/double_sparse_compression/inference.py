@@ -93,10 +93,19 @@ class SparsifiedLinear(torch.nn.Module):
             b_row_offsets = b_sparse.crow_indices()
             row_counts = torch.diff(b_row_offsets)
             non_zero_row_count = (row_counts != 0).sum().item()
-            row_ids = row_counts.argsort(descending=True)
-            a_dense = double_sparse_legacy.a.to_dense()[:, row_ids]
-            a_dense[:, non_zero_row_count:] = 0
-            b_dense = b_sparse.to_dense()[row_ids, :]
+
+            row_counts_sorted, row_ids = row_counts.sort(descending=False)
+
+            non_zero_row_ids_sorted = row_ids[row_counts_sorted != 0]
+            zero_row_ids_sorted = row_ids[row_counts_sorted == 0]
+
+            a_dense = double_sparse_legacy.a.to_dense()
+
+            reordered_row_ids = torch.concat((non_zero_row_ids_sorted, zero_row_ids_sorted))
+
+            a_dense = a_dense[:, reordered_row_ids]
+            a_dense[:, non_zero_row_ids_sorted.shape[0]:] = 0
+            b_dense = b_sparse.to_dense()[reordered_row_ids, :]
             if IS_CSC:
                 a_sparse = a_dense.t().to_sparse_csr()
             else:
