@@ -1,3 +1,4 @@
+import os
 import time
 from enum import IntEnum
 from typing import Tuple
@@ -6,6 +7,7 @@ import numpy as np
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, LlamaTokenizer, StaticCache
 
+from double_sparse_compression import SparsifiedLinear
 from modelutils import suspend_nn_inits
 
 torch.autograd.set_grad_enabled(False)
@@ -37,6 +39,14 @@ def decode_one_tokens(model, cur_token, input_pos, cache_position, past_key_valu
     )[0]
     new_token = torch.argmax(logits[:, -1], dim=-1)[:, None]
     return new_token
+
+def allocate_workspace_buffer(model):
+    for tensor_name, m in model.named_children():
+        if isinstance(m, SparsifiedLinear):
+            workspace_tensor = torch.tensor(m.k, dtype=torch.float32, device=m.a_row_offsets.device)
+            m.workspace = torch.nn.Parameter(workspace_tensor, requires_grad=False)
+        else:
+            allocate_workspace_buffer(m)
 
 
 class InferenceDemo:
@@ -93,6 +103,8 @@ class InferenceDemo:
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.model.eval()
+
+        allocate_workspace_buffer(self.model)
 
     def generate(self, input_str, max_new_tokens) -> Tuple:
         inputs = self.tokenizer(input_str, return_tensors="pt").to(device=self.device)
@@ -170,10 +182,10 @@ if __name__ == "__main__":
 
     m = Mode(args.execution_mode)
 
-    max_new_tokens = 4
+    max_new_tokens = 5
     with torch.no_grad():
         model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m)
-        text = "President Carter"  # input()
+        text = "President"  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=max_new_tokens)
         e = time.time()

@@ -289,24 +289,25 @@ if __name__ == "__main__":
         pretrained_model_name_or_path=args.base_model, trust_remote_code=True, torch_dtype=torch.half, config=config
     )
 
-
-
     replace_and_save_quantized_layers(model, args.tensors_path, is_legacy)
-        
-    m = Mode(2)
 
-    with torch.no_grad():
-        model = InferenceDemo(args.base_model, None, m, model=model)
-        text = "Valkyria Chronicles is a video game "  # input()
-        s = time.time()
-        generated_text, timings_s = model.generate(text, max_new_tokens=32)
-        e = time.time()
-        print(f"{generated_text}")
+    torch.save(model, args.torch_pt_path)
 
-        print(f"Total duration = {e - s}s")
-
-        durations = np.array(timings_s[16:])
-
-        print(f"Mean duration after caching initial input = {durations.mean()}")
-        print(f"Median duration after caching initial input = {np.median(durations)}")
-        print(f"Best duration after caching initial input = {np.min(durations)}")
+    #
+    # m = Mode(2)
+    #
+    # with torch.no_grad():
+    #     model = InferenceDemo(args.base_model, None, m, model=model)
+    #     text = "Valkyria Chronicles is a video game "  # input()
+    #     s = time.time()
+    #     generated_text, timings_s = model.generate(text, max_new_tokens=32)
+    #     e = time.time()
+    #     print(f"{generated_text}")
+    #
+    #     print(f"Total duration = {e - s}s")
+    #
+    #     durations = np.array(timings_s[16:])
+    #
+    #     print(f"Mean duration after caching initial input = {durations.mean()}")
+    #     print(f"Median duration after caching initial input = {np.median(durations)}")
+    #     print(f"Best duration after caching initial input = {np.min(durations)}")

@@ -49,7 +49,8 @@ def doublesparse_mul_timer(doublesparse_device: SparsifiedLinear, x, feature_fla
         x,
         y,
         result,
-        feature_flag
+        feature_flag,
+        torch.tensor(k, dtype=torch.float, device=x.device)
     )
 
     return y, result.item()

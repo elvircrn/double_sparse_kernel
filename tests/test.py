@@ -62,21 +62,6 @@ def to_dense(double_sparse: DoubleSparseLegacy):
     return torch.matmul(double_sparse.a.to_dense().float().to(device='cuda'), double_sparse.b.to_dense().float().to(device='cuda')).half()
 
 
-def doublesparse_mul(sparsified_linear: SparsifiedLinear, x, y, featurea_flag, batch_size):
-    return get_doublesparse_mul()(
-        sparsified_linear.m,
-        sparsified_linear.n,
-        sparsified_linear.k,
-        sparsified_linear.a_row_offsets,
-        sparsified_linear.a_col_vals,
-        sparsified_linear.b_row_offsets,
-        sparsified_linear.b_col_vals,
-        sparsified_linear.non_zero_rows,
-        batch_size,
-        x, featurea_flag, y, y
-    )
-
-
 class TestSparseFp16Easy(unittest.TestCase):
     def test_sparse_ones(self):
         # Call this once just to trigger the annoying torch sparse warning.
@@ -98,8 +83,7 @@ class TestSparseFp16Easy(unittest.TestCase):
                             y = torch.zeros(m * batch_size, dtype=torch.half, device=device)
                             y_true = torch.zeros(m * batch_size, dtype=torch.half, device=device)
                             sparsified_linear = SparsifiedLinear.from_legacy(ds, device)
-                            doublesparse_mul(sparsified_linear, x, y_true, FeatureFlags.CSR_NAIVE, batch_size)
-                            doublesparse_mul(sparsified_linear, x, y, FeatureFlags.CSR, batch_size)
+                            y = sparsified_linear.forward(x, FeatureFlags.CSR)
                             dense_mat = to_dense(ds)
                             x_reshaped = x.reshape((batch_size, n)).T.contiguous()
                             y_matmul = (dense_mat.float() @ x_reshaped.float()).half().T.flatten()

@@ -20,33 +20,29 @@
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
 
-static constexpr u32
-    SHARED_OFFSET = 32;
-static constexpr u32
-    WARP_SIZE = 32;
-static constexpr u32
-    FULL_MASK = 0xFFFFFFFFu;
+static constexpr u32 SHARED_OFFSET = 32;
+static constexpr u32 WARP_SIZE = 32;
+static constexpr u32 FULL_MASK = 0xFFFFFFFFu;
 
 __device__ void printf_half2(const half2 &_x) {
   auto x = __half22float2(_x);
   printf("%f %f\n", x.x, x.y);
 }
 
-
-__device__ void printf_float2(float2 x) {
-  printf("%f %f\n", x.x, x.y);
-}
+__device__ void printf_float2(float2 x) { printf("%f %f\n", x.x, x.y); }
 
 #define DEVICE_INLINE __forceinline__ __device__
 
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
-half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s, const half2 &z) {
+half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s,
+                                const half2 &z) {
   const half2 &res = __hmul2(s, __hsub2(q, z));
   return res;
 }
 
-template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
+template <class Bit_t, class Scalar_t>
+DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
   if constexpr (std::is_same<Bit_t, half>::value) {
     return __hmul(s, __hsub(q, z));
   } else {
@@ -54,9 +50,10 @@ template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q,
   }
 }
 
-#define INT2_TO_HALF2(v) make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
+#define INT2_TO_HALF2(v)                                                       \
+  make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
 
-template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
+template <class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   if constexpr (std::is_same_v<Acc_t, float> || std::is_same_v<Acc_t, float2>) {
     return true;
   }
@@ -68,9 +65,11 @@ template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
 #define UPDIV(X, Y) (((X) + (Y) - 1) / (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
 
-[[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) { return (x + y - 1) / y; }
+[[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) {
+  return (x + y - 1) / y;
+}
 
-template<class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
+template <class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
   if constexpr (std::is_same<Scalar_t, float>::value) {
     return reinterpret_cast<float2 *>(ptr);
   } else if constexpr (std::is_same<Scalar_t, half>::value) {
@@ -80,8 +79,9 @@ template<class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
   }
 }
 
-template<class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
-  if constexpr (std::is_same<Vec_t, float>::value || std::is_same<Vec_t, float2>::value) {
+template <class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
+  if constexpr (std::is_same<Vec_t, float>::value ||
+                std::is_same<Vec_t, float2>::value) {
     return reinterpret_cast<float *>(ptr);
   } else if constexpr (std::is_same<Vec_t, half2>::value) {
     return reinterpret_cast<half *>(ptr);
@@ -97,7 +97,9 @@ DEVICE_INLINE half add_and_accum(const half2 &a, const half2 &b) {
   return __hadd(r.x, r.y);
 }
 
-template<class T> DEVICE_INLINE u16 get_col(T m) { return static_cast<u16>(m & T((1u << 16u) - 1u)); }
+template <class T> DEVICE_INLINE u16 get_col(T m) {
+  return static_cast<u16>(m & T((1u << 16u) - 1u));
+}
 
 DEVICE_INLINE half get_val(u32 m) {
   u16 _v = m >> 16u;
@@ -105,20 +107,25 @@ DEVICE_INLINE half get_val(u32 m) {
   return v;
 }
 
-
 // Wait until at most `n` async copy stages are still pending.
-template<int n> DEVICE_INLINE void cp_async_wait() { asm volatile("cp.async.wait_group %0;\n"::"n"(n)); }
+template <int n> DEVICE_INLINE void cp_async_wait() {
+  asm volatile("cp.async.wait_group %0;\n" ::"n"(n));
+}
 
-DEVICE_INLINE void cp_async(half2 *__restrict__ dst, const half2 *__restrict__ src) {
+DEVICE_INLINE void cp_async(half2 *__restrict__ dst,
+                            const half2 *__restrict__ src) {
   u32 s_dst = u32(__cvta_generic_to_shared(dst));
-  asm volatile("cp.async.ca.shared.global [%0], [%1], 4;\n"::"r"(s_dst), "l"(src));
+  asm volatile("cp.async.ca.shared.global [%0], [%1], 4;\n" ::"r"(s_dst),
+               "l"(src));
 }
 
 using Load_t = __int128_t;
 
-DEVICE_INLINE void cp_async128(Load_t *__restrict__ dst, const Load_t *__restrict__ src) {
+DEVICE_INLINE void cp_async128(Load_t *__restrict__ dst,
+                               const Load_t *__restrict__ src) {
   u32 s_dst = u32(__cvta_generic_to_shared(dst));
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n"::"r"(s_dst), "l"(src));
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" ::"r"(s_dst),
+               "l"(src));
 }
 
 DEVICE_INLINE void cp_async_wait_all() { asm volatile("cp.async.wait_all;\n"); }
@@ -128,8 +135,8 @@ __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
   asm volatile("{\n"
                "   ld.global.ca.u32 %0, [%1];\n"
                "}\n"
-      : "=r"(v)
-      : "l"(ptr));
+               : "=r"(v)
+               : "l"(ptr));
   return v;
 }
 
@@ -137,14 +144,13 @@ union Features {
   uint32_t _;
 
   struct {
-    uint32_t is_async: 1;
-    uint32_t is_csc: 1;
-    uint32_t is_split: 1;
-    uint32_t is_naive: 1;
-    uint32_t rest: 28;
+    uint32_t is_async : 1;
+    uint32_t is_csc : 1;
+    uint32_t is_split : 1;
+    uint32_t is_naive : 1;
+    uint32_t rest : 28;
   } flags;
 };
-
 
 DEVICE_INLINE float reduce_final(float val) {
   for (int offset = 16; offset > 0; offset /= 2) {
@@ -153,20 +159,15 @@ DEVICE_INLINE float reduce_final(float val) {
   return val;
 }
 
-
-template<int PHASE, int WARP_COUNT>
-__global__ void doublesparse_naive(int m, int n, int k,
-                                   const u32 *__restrict__ a_row_offsets,
-                                   const ColVal *__restrict__ a_col_vals,
-                                   const u32 *__restrict__ b_row_offsets,
-                                   const ColVal *__restrict__ b_col_vals,
-                                   int non_zero_rows,
-                                   int batch_size,
-                                   const half *__restrict__ _x,
-                                   half *_y,
-                                   float *__restrict__ _workspace,
-                                   u32 smem_size_fp32,
-                                   int global_row_offset = 0) {
+template <int PHASE, int WARP_COUNT>
+__global__ void
+doublesparse_naive(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
+                   const ColVal *__restrict__ a_col_vals,
+                   const u32 *__restrict__ b_row_offsets,
+                   const ColVal *__restrict__ b_col_vals, int non_zero_rows,
+                   int batch_size, const half *__restrict__ _x, half *_y,
+                   float *__restrict__ _workspace, u32 smem_size_fp32,
+                   int global_row_offset = 0) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
 
@@ -210,7 +211,6 @@ __global__ void doublesparse_naive(int m, int n, int k,
   auto row_end = s_row_offsets[warp_id + 1];
   auto row_ptr = row_start + lane_id;
 
-
   float acc{};
 
   const ColVal *col_vals;
@@ -219,7 +219,6 @@ __global__ void doublesparse_naive(int m, int n, int k,
   } else {
     col_vals = a_col_vals;
   }
-
 
   {
     for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
@@ -239,7 +238,6 @@ __global__ void doublesparse_naive(int m, int n, int k,
     }
   }
 
-
   acc = reduce_final(acc);
 
   if (!lane_id) {
@@ -251,20 +249,15 @@ __global__ void doublesparse_naive(int m, int n, int k,
   }
 }
 
-
-template<int PHASE, int WARP_COUNT>
-__global__ void doublesparse(int m, int n, int k,
-                             const u32 *__restrict__ a_row_offsets,
-                             const ColVal *__restrict__ a_col_vals,
-                             const u32 *__restrict__ b_row_offsets,
-                             const ColVal *__restrict__ b_col_vals,
-                             int non_zero_rows,
-                             int batch_size,
-                             const half *__restrict__ x,
-                             half *_y,
-                             float *__restrict__ _workspace,
-                             u32 smem_size_fp32,
-                             int global_row_offset = 0) {
+template <int PHASE, int WARP_COUNT>
+__global__ void
+doublesparse(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
+             const ColVal *__restrict__ a_col_vals,
+             const u32 *__restrict__ b_row_offsets,
+             const ColVal *__restrict__ b_col_vals, int non_zero_rows,
+             int batch_size, const half *__restrict__ x, half *_y,
+             float *__restrict__ _workspace, u32 smem_size_fp32,
+             int global_row_offset = 0) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
 
@@ -295,21 +288,25 @@ __global__ void doublesparse(int m, int n, int k,
   }
 
   int row_to_load = (blockIdx.x * WARP_COUNT) + threadIdx.x;
-  int rows_to_load = min(WARP_COUNT, ((!PHASE ? non_zero_rows : m) - blockIdx.x * WARP_COUNT));
+  int rows_to_load =
+      min(WARP_COUNT, ((!PHASE ? non_zero_rows : m) - blockIdx.x * WARP_COUNT));
 
   const u32 *row_offsets = !PHASE ? b_row_offsets : a_row_offsets;
 
-  if (threadIdx.x < WARP_COUNT && row_to_load < (blockIdx.x * WARP_COUNT) + rows_to_load) {
+  if (threadIdx.x < WARP_COUNT &&
+      row_to_load < (blockIdx.x * WARP_COUNT) + rows_to_load) {
     s_row_offsets[threadIdx.x] = row_offsets[row_to_load];
   }
 
   if (!threadIdx.x) {
-    s_row_offsets[rows_to_load] = row_offsets[blockIdx.x * WARP_COUNT + rows_to_load];
+    s_row_offsets[rows_to_load] =
+        row_offsets[blockIdx.x * WARP_COUNT + rows_to_load];
   }
 
   float acc{};
   // Pages of x strips.
-  auto pages = !PHASE ? updiv(n / 2, smem_size_fp32) : updiv(non_zero_rows, smem_size_fp32);
+  auto pages = !PHASE ? updiv(n / 2, smem_size_fp32)
+                      : updiv(non_zero_rows, smem_size_fp32);
 
   const ColVal *col_vals;
   if (!PHASE) {
@@ -395,8 +392,9 @@ __global__ void doublesparse(int m, int n, int k,
           auto local_c = col_val.members.c - page * smem_size_fp16;
           acc += __half2float(s_x[local_c]) * __half2float(col_val.members.v);
         } else {
-          int local_c = (int) col_val.members.c - (int) page_offset;
-          acc += reinterpret_cast<float *>(s_x2)[local_c] * __half2float(col_val.members.v);
+          int local_c = (int)col_val.members.c - (int)page_offset;
+          acc += reinterpret_cast<float *>(s_x2)[local_c] *
+                 __half2float(col_val.members.v);
         }
       }
 
@@ -415,19 +413,14 @@ __global__ void doublesparse(int m, int n, int k,
   }
 }
 
-
-template<int WARP_COUNT>
-__global__ void doublesparse_csc(int m, int n, int k,
-                                 const u32 *__restrict__ a_row_offsets,
-                                 const ColVal *__restrict__ a_col_vals,
-                                 const u32 *__restrict__ b_row_offsets,
-                                 const ColVal *__restrict__ b_col_vals,
-                                 int non_zero_rows,
-                                 int batch_size,
-                                 const half *__restrict__ x,
-                                 half *_y,
-                                 float *__restrict__ _workspace,
-                                 u32 smem_size_fp32) {
+template <int WARP_COUNT>
+__global__ void
+doublesparse_csc(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
+                 const ColVal *__restrict__ a_col_vals,
+                 const u32 *__restrict__ b_row_offsets,
+                 const ColVal *__restrict__ b_col_vals, int non_zero_rows,
+                 int batch_size, const half *__restrict__ x, half *_y,
+                 float *__restrict__ _workspace, u32 smem_size_fp32) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
 
@@ -459,13 +452,11 @@ __global__ void doublesparse_csc(int m, int n, int k,
   auto b_row_end = s_row_offsets[warp_id + 1];
   auto b_row_ptr = b_row_start + lane_id;
 
-
   float acc{};
   // Pages of x strips.
   auto pages = updiv(n / 2, smem_size_fp32);
 
   const ColVal *col_vals = b_col_vals;
-
 
   if (pages == 1) {
     auto x2_to_load = n / 2;
@@ -495,7 +486,6 @@ __global__ void doublesparse_csc(int m, int n, int k,
 
       __syncthreads();
 
-
       u32 column_limit{};
 
       column_limit = smem_size_fp16 * (page + 1);
@@ -521,88 +511,58 @@ __global__ void doublesparse_csc(int m, int n, int k,
   acc = reduce_final(acc);
 }
 
-#define CALL_DOUBLE_MATMUL(P, SMEM_SIZE_FP32, K, given_stream, global_offset) K<P, WARP_COUNT><<<dim3(updiv((!P ? non_zero_rows : m), WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), given_stream>>>(m, n, k, \
-                                                                                (u32 *) a_row_offsets, \
-                                                                                (ColVal *) a_col_vals, \
-                                                                                (u32 *) b_row_offsets, \
-                                                                                (ColVal *) b_col_vals, \
-                                                                                non_zero_rows, \
-                                                                                batch_size, \
-                                                                                (half *) X, \
-                                                                                (half *) y,                               \
-                                                                                d_workspace,                                                                                           \
-                                                           SMEM_SIZE_FP32,                                                                                                                                                                      \
-                                                           global_offset)
+#define CALL_DOUBLE_MATMUL(P, SMEM_SIZE_FP32, K, given_stream, global_offset)  \
+  K<P, WARP_COUNT>                                                             \
+      <<<dim3(updiv((!P ? non_zero_rows : m), WARP_COUNT), batch_size, 1),     \
+         dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), given_stream>>>(  \
+          m, n, k, (u32 *)a_row_offsets, (ColVal *)a_col_vals,                 \
+          (u32 *)b_row_offsets, (ColVal *)b_col_vals, non_zero_rows,           \
+          batch_size, (half *)X, (half *)y, d_workspace, SMEM_SIZE_FP32,       \
+          global_offset)
 
-#define CALL_DOUBLE_MATMUL_CSC(P, SMEM_SIZE_FP32) doublesparse_csc<WARP_COUNT><<<dim3(updiv(!P ? non_zero_rows : m, WARP_COUNT), batch_size, 1), dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), stream>>>(m, n, k, \
-                                                                                (u32 *) a_row_offsets, \
-                                                                                (ColVal *) a_col_vals, \
-                                                                                (u32 *) b_row_offsets, \
-                                                                                (ColVal *) b_col_vals, \
-                                                                                non_zero_rows, \
-                                                                                batch_size, \
-                                                                                (half *) X, \
-                                                                                (half *) y,                               \
-                                                                                d_workspace,                                                                                           \
-                                                           SMEM_SIZE_FP32)
+#define CALL_DOUBLE_MATMUL_CSC(P, SMEM_SIZE_FP32)                              \
+  doublesparse_csc<WARP_COUNT>                                                 \
+      <<<dim3(updiv(!P ? non_zero_rows : m, WARP_COUNT), batch_size, 1),       \
+         dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), stream>>>(        \
+          m, n, k, (u32 *)a_row_offsets, (ColVal *)a_col_vals,                 \
+          (u32 *)b_row_offsets, (ColVal *)b_col_vals, non_zero_rows,           \
+          batch_size, (half *)X, (half *)y, d_workspace, SMEM_SIZE_FP32)
 
-
-#define KERNEL_CALL \
-    if (!features.flags.is_csc && !features.flags.is_naive) { \
-      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse, stream, 0); \
-      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse, stream, 0); \
-    } else if (features.flags.is_naive) {                            \
-      CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse_naive, stream, 0); \
-      CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse_naive, stream, 0); \
-    } else { \
-      CALL_DOUBLE_MATMUL_CSC(0, std::min((1 << 13), updiv(n, 2))); \
-      CALL_DOUBLE_MATMUL_CSC(1, std::min((1 << 13), k)); \
-    }               \
-
-
-int doublesparse_matmul(
-    int m, int n, int k,
-    void *a_row_offsets,
-    void *a_col_vals,
-    void *b_row_offsets,
-    void *b_col_vals,
-    int non_zero_rows,
-    int batch_size,
-    // 16-bit
-    // Input
-    void *X,
-    // Output
-    void *y,
-    cudaStream_t stream,
-    void *measurements,
-    uint32_t feature_flag) {
-  Features features{._ = feature_flag};
-
-  float *d_workspace;
-  if (features.flags.is_csc) {
-    cudaMalloc(reinterpret_cast<void **>(&d_workspace), sizeof(float) * k * batch_size);
-    cudaMemset(d_workspace, 0, sizeof(float) * k * batch_size);
-    cudaDeviceSynchronize();
-  } else {
-    cudaMalloc(reinterpret_cast<void **>(&d_workspace), sizeof(float) * k * batch_size);
-    cudaMemset(d_workspace, 0, k * batch_size);
-    cudaDeviceSynchronize();
+#define KERNEL_CALL                                                            \
+  if (!features.flags.is_csc && !features.flags.is_naive) {                    \
+    CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse,      \
+                       stream, 0);                                             \
+    CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse, stream, 0);    \
+  } else if (features.flags.is_naive) {                                        \
+    CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)),                    \
+                       doublesparse_naive, stream, 0);                         \
+    CALL_DOUBLE_MATMUL(1, std::min((1 << 13), k), doublesparse_naive, stream,  \
+                       0);                                                     \
+  } else {                                                                     \
+    CALL_DOUBLE_MATMUL_CSC(0, std::min((1 << 13), updiv(n, 2)));               \
+    CALL_DOUBLE_MATMUL_CSC(1, std::min((1 << 13), k));                         \
   }
 
-  cudaStream_t stream1, stream2;
-  cudaStreamCreate(&stream1);
-  cudaStreamCreate(&stream2);
-
-  constexpr
-  u32 NUM_RUNS = 500;
-  constexpr
-  u32 WARMUPS = 100;
+int doublesparse_matmul(int m, int n, int k, void *a_row_offsets,
+                        void *a_col_vals, void *b_row_offsets, void *b_col_vals,
+                        int non_zero_rows, int batch_size,
+                        // 16-bit
+                        // Input
+                        void *X,
+                        void *y,
+                        float *d_workspace,
+                        // Output
+                        cudaStream_t stream, void *measurements,
+                        uint32_t feature_flag) {
+  Features features{._ = feature_flag};
 
   constexpr u32 WARP_COUNT = 16;
   constexpr u32 THREAD_COUNT = WARP_SIZE * WARP_COUNT;
 
   Timer *timer{};
   if (measurements) {
+    constexpr u32 NUM_RUNS = 500;
+    constexpr u32 WARMUPS = 100;
     for (int i = 0; i < WARMUPS; i++) {
       KERNEL_CALL;
     }
@@ -621,10 +581,6 @@ int doublesparse_matmul(
       CHECK_CUDA(cudaDeviceSynchronize());
     }
   }
-
-  cudaFree(d_workspace);
-  cudaStreamDestroy(stream1);
-  cudaStreamDestroy(stream2);
 
   return 0;
 }

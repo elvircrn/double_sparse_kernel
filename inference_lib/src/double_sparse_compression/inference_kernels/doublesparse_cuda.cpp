@@ -37,6 +37,7 @@ int doublesparse_matmul(
     void *X,
     // Output
     void *y,
+    float *d_workspace_single_batch = nullptr,
     // GPU meta
     cudaStream_t stream = nullptr,
     void *measurements = nullptr,
@@ -50,9 +51,12 @@ void doublesparse_mul(
     const torch::Tensor &b_col_val,
     int non_zero_rows,
     int batch_size,
-    const torch::Tensor &X, s64 _feature_flag,
-    const torch::Tensor &Y, torch::Tensor &out) {
-  u32 feature_flag = static_cast<u32>(_feature_flag);
+    const torch::Tensor &X,
+    s32 f,
+    const torch::Tensor &workspace,
+    const torch::Tensor &Y,
+    torch::Tensor &out) {
+  u32 feature_flag = static_cast<u32>(f);
   int dev = a_row_offsets.get_device();
 
   int err = doublesparse_matmul(
@@ -63,7 +67,9 @@ void doublesparse_mul(
       b_col_val.data_ptr(),
       non_zero_rows,
       batch_size,
-      X.data_ptr(), Y.data_ptr(),
+      X.data_ptr(),
+      Y.data_ptr(),
+      workspace.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev),
       nullptr, feature_flag);
 }
@@ -79,7 +85,8 @@ void doublesparse_mul_timer(
     int batch_size,
     // 16-bit
     const torch::Tensor &X, torch::Tensor &Y,
-    torch::Tensor &measurements, u32 feature_flag
+    torch::Tensor &measurements, u32 feature_flag,
+    const torch::Tensor &workspace
 ) {
   int dev = a_row_offsets.get_device();
 
@@ -92,6 +99,7 @@ void doublesparse_mul_timer(
       non_zero_rows,
       batch_size,
       X.data_ptr(), Y.data_ptr(),
+      workspace.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev),
       measurements.data_ptr(), feature_flag);
 
@@ -102,7 +110,7 @@ enum class SparseCompressionStrategy { CSR = 0, PTCSR = 1 };
 
 #ifndef PYBIND_SKIP
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-m.def("doublesparse_mul_timer", &doublesparse_mul_timer, "SPQR matvec.");
+m.def("doublesparse_mul_timer", &doublesparse_mul_timer, "SPQR matvec with benchmarking.");
 m.def("doublesparse_mul", &doublesparse_mul, "SPQR matvec.");
 }
 #endif

@@ -15,11 +15,11 @@ SPQR_CUDA = load(
 torch.library.define(
     "doublesparse_cuda"
     "::doublesparse_mul",
-    "(int m, int n, int k, Tensor a_row_offsets, Tensor a_col_vals, Tensor b_row_offsets, Tensor b_col_vals, int non_zero_rows, int batch_size, Tensor x, int f, Tensor Y, Tensor(Y!) out) -> ()",
+    "(int m, int n, int k, Tensor a_row_offsets, Tensor a_col_vals, Tensor b_row_offsets, Tensor b_col_vals, int non_zero_rows, int batch_size, Tensor x, int f, Tensor workspace, Tensor Y, Tensor(Y!) out) -> ()",
 )
 torch.library.define(
     "doublesparse_cuda::doublesparse_mul_timer",
-    "(int m, int n, int k, Tensor a_row_offsets, Tensor a_col_vals, Tensor b_row_offsets, Tensor b_col_vals, int non_zero_rows, int batch_size, Tensor x, Tensor Y, Tensor measurements, int f) -> ()",
+    "(int m, int n, int k, Tensor a_row_offsets, Tensor a_col_vals, Tensor b_row_offsets, Tensor b_col_vals, int non_zero_rows, int batch_size, Tensor x, Tensor Y, Tensor measurements, int f, Tensor workspace) -> ()",
 )
 
 torch.library.impl("doublesparse_cuda::doublesparse_mul_timer", "default", SPQR_CUDA.doublesparse_mul_timer)

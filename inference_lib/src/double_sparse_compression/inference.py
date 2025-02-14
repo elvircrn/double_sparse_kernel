@@ -29,6 +29,23 @@ from double_sparse_compression.inference_kernels.kernel_selector import get_doub
 from .sparse_util import init_ptcsr, merge_col_val
 
 
+ASYNC = 1 << 0
+IS_CSC = 1 << 1
+IS_NAIVE = 1 << 3
+
+class FeatureFlags(IntEnum):
+    CSR = 0
+    CSC = IS_CSC
+    CSR_ASYNC = CSR | ASYNC
+    CSR_NAIVE = CSR | IS_NAIVE
+    CSR_NAIVE_ASYNC = CSR | IS_NAIVE | ASYNC
+
+    def pretty(self):
+        if self.value == self.CSR:
+            return "CSR"
+        elif self.value == self.CSC:
+            return "CSC"
+
 # Utility functions
 class SparseStorageConfiguration(StrEnum):
     CSR = "csr"
@@ -182,16 +199,21 @@ class SparsifiedLinear(torch.nn.Module):
 
 
     @torch.no_grad()
-    def forward(self, x: T) -> T:
+    def forward(self, x: T, flag=FeatureFlags.CSR_ASYNC) -> T:
         """
         Forward matmul operation. The kernel currently only supports matvec. Therefore, to fully implement matmuls,
         a for loop is used which is horribly inefficient, but will do for now.
         @param x: Input tensor.
+        @param flag: Feature flag.
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
         """ 
         if not hasattr(self, 'K'): self.K = get_doublesparse_mul()
         batch_size = x.shape[1]
         y = torch.zeros((1, batch_size, self.m), dtype=torch.float16, device=x.device)
+
+        workspace = self.workspace
+        if batch_size != 1:
+            workspace = torch.tensor(self.k * batch_size, dtype=torch.float, requires_grad=False, device=self.a_row_offsets.device)
         self.K(
             self.m,
             self.n,
@@ -203,7 +225,8 @@ class SparsifiedLinear(torch.nn.Module):
             self.non_zero_rows,
             batch_size,
             x,
-            FeatureFlags.CSR_ASYNC,
+            flag,
+            workspace,
             y,
             y
         )
@@ -216,20 +239,3 @@ def updiv(x, y):
     """
     return (x + y - 1) // y
 
-
-ASYNC = 1 << 0
-IS_CSC = 1 << 1
-IS_NAIVE = 1 << 3
-
-class FeatureFlags(IntEnum):
-    CSR = 0
-    CSC = IS_CSC
-    CSR_ASYNC = CSR | ASYNC
-    CSR_NAIVE = CSR | IS_NAIVE
-    CSR_NAIVE_ASYNC = CSR | IS_NAIVE | ASYNC
-
-    def pretty(self):
-        if self.value == self.CSR:
-            return "CSR"
-        elif self.value == self.CSC:
-            return "CSC"
