@@ -37,7 +37,7 @@ int doublesparse_matmul(
     void *X,
     // Output
     void *y,
-    float *d_workspace_single_batch = nullptr,
+    void *d_workspace,
     // GPU meta
     cudaStream_t stream = nullptr,
     void *measurements = nullptr,

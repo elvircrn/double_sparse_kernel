@@ -63,7 +63,7 @@ def to_dense(double_sparse: DoubleSparseLegacy):
 
 
 class TestSparseFp16Easy(unittest.TestCase):
-    def test_sparse_ones(self):
+    def test_sparse_random(self):
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device("cuda:0")
 
@@ -74,23 +74,22 @@ class TestSparseFp16Easy(unittest.TestCase):
         for m in [4096, 11008]:
             for n in [4096, 11008]:
                 for k in [11008, 4096]:
-                    for batch_size in [1]:
-                        for density in [0.1]:
+                    for batch_size in [1, 2, 4, 8]:
+                        for density in [0.05, 0.1, 0.3]:
                             print(f"Running m = {m} n = {n} k = {k} batch_size = {batch_size}")
                             # Generate test case
                             x = create_x_random(n * batch_size).cuda(device=device).half()
                             ds = random_doublesparse(m, n, k, density)
-                            y = torch.zeros(m * batch_size, dtype=torch.half, device=device)
-                            y_true = torch.zeros(m * batch_size, dtype=torch.half, device=device)
                             sparsified_linear = SparsifiedLinear.from_legacy(ds, device)
-                            y = sparsified_linear.forward(x, FeatureFlags.CSR)
+                            y = sparsified_linear.forward(x.reshape((n, batch_size)).contiguous(), FeatureFlags.CSR).squeeze()
                             dense_mat = to_dense(ds)
                             x_reshaped = x.reshape((batch_size, n)).T.contiguous()
-                            y_matmul = (dense_mat.float() @ x_reshaped.float()).half().T.flatten()
+                            y_matmul = (dense_mat.float() @ x_reshaped.float()).T.half().squeeze()
                             passed = torch.equal(y, y_matmul)
+                            print(passed)
                             self.assertTrue(
                                 passed,
-                                msg=f"Failed for m = {m} n = {n} k = {k} batch_size = {batch_size} density = {density}\ny={y}\ny_true={y_true}\nmatmul = {y_matmul}"
+                                msg=f"Failed for m = {m} n = {n} k = {k} batch_size = {batch_size} density = {density}\ny={y}\nmatmul = {y_matmul}"
                             )
 
 

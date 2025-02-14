@@ -28,10 +28,10 @@ from double_sparse_compression.inference_kernels.kernel_selector import get_doub
 # )
 from .sparse_util import init_ptcsr, merge_col_val
 
-
 ASYNC = 1 << 0
 IS_CSC = 1 << 1
 IS_NAIVE = 1 << 3
+
 
 class FeatureFlags(IntEnum):
     CSR = 0
@@ -45,6 +45,7 @@ class FeatureFlags(IntEnum):
             return "CSR"
         elif self.value == self.CSC:
             return "CSC"
+
 
 # Utility functions
 class SparseStorageConfiguration(StrEnum):
@@ -82,7 +83,7 @@ class SparsifiedLinear(torch.nn.Module):
         self.b_row_offsets = nn.Parameter(b_row_offsets, requires_grad=False)
         self.b_col_vals = nn.Parameter(b_col_vals, requires_grad=False)
         self.non_zero_rows = non_zero_rows
-
+        self.workspace = None
 
     @staticmethod
     def _from_legacy(double_sparse_legacy: DoubleSparseLegacy, device):
@@ -123,42 +124,25 @@ class SparsifiedLinear(torch.nn.Module):
             a_dense = a_dense[:, reordered_row_ids]
             a_dense[:, non_zero_row_ids_sorted.shape[0]:] = 0
             b_dense = b_sparse.to_dense()[reordered_row_ids, :]
-            if IS_CSC:
-                a_sparse = a_dense.t().to_sparse_csr()
-            else:
-                a_sparse = a_dense.to_sparse_csr()
+            a_sparse = a_dense.to_sparse_csr()
             b_sparse = b_dense.to_sparse_csr()
         else:
             a_sparse = double_sparse_legacy.a.to_dense().to_sparse_csr()
             b_sparse = double_sparse_legacy.b.to_dense().to_sparse_csr()
             non_zero_row_count = double_sparse_legacy.k
 
-        if IS_CSC:
-            mod = SparsifiedLinear(
-                double_sparse_legacy.m,
-                double_sparse_legacy.n,
-                double_sparse_legacy.k,
-                a_sparse.crow_indices().int(),
-                merge_col_val(a_sparse.col_indices().short(), a_sparse.values().half()),
-                b_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
-                merge_col_val(b_sparse.col_indices().short(), b_sparse.values().half()),
-                non_zero_row_count
-            )
-        else:
-            mod = SparsifiedLinear(
-                double_sparse_legacy.m,
-                double_sparse_legacy.n,
-                double_sparse_legacy.k,
-                a_sparse.crow_indices().int(),
-                merge_col_val(a_sparse.col_indices().short(), a_sparse.values().half()),
-                b_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
-                merge_col_val(b_sparse.col_indices().short(), b_sparse.values().half()),
-                non_zero_row_count
-            )
-
+        mod = SparsifiedLinear(
+            double_sparse_legacy.m,
+            double_sparse_legacy.n,
+            double_sparse_legacy.k,
+            a_sparse.crow_indices().int(),
+            merge_col_val(a_sparse.col_indices().short(), a_sparse.values().half()),
+            b_sparse.crow_indices()[:(non_zero_row_count + 1)].int(),
+            merge_col_val(b_sparse.col_indices().short(), b_sparse.values().half()),
+            non_zero_row_count
+        )
 
         return mod.to(device=device)
-
 
     def dequantize_dense_only(self):
         """
@@ -197,7 +181,6 @@ class SparsifiedLinear(torch.nn.Module):
         """
         return 1 - self.density
 
-
     @torch.no_grad()
     def forward(self, x: T, flag=FeatureFlags.CSR_ASYNC) -> T:
         """
@@ -206,14 +189,15 @@ class SparsifiedLinear(torch.nn.Module):
         @param x: Input tensor.
         @param flag: Feature flag.
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
-        """ 
+        """
         if not hasattr(self, 'K'): self.K = get_doublesparse_mul()
         batch_size = x.shape[1]
-        y = torch.zeros((1, batch_size, self.m), dtype=torch.float16, device=x.device)
+        y = torch.zeros((1, batch_size, self.m), dtype=torch.float16, device=x.device).contiguous()
 
         workspace = self.workspace
-        if batch_size != 1:
-            workspace = torch.tensor(self.k * batch_size, dtype=torch.float, requires_grad=False, device=self.a_row_offsets.device)
+        if workspace is None or batch_size != 1:
+            workspace = torch.empty(self.k * batch_size, dtype=torch.float32, requires_grad=False,
+                                     device=self.a_row_offsets.device)
         self.K(
             self.m,
             self.n,
@@ -238,4 +222,3 @@ def updiv(x, y):
     @return: Utility method: updivision between x and y.
     """
     return (x + y - 1) // y
-

@@ -9,7 +9,7 @@ SPQR_CUDA = load(
     sources=[os.path.join(CUDA_FOLDER, "doublesparse_cuda.cpp"),
              os.path.join(CUDA_FOLDER, "doublesparse_cuda_kernel.cu")],
     extra_cflags=[""],
-    extra_cuda_cflags=["-arch=native -lineinfo"]
+    extra_cuda_cflags=["-arch=native -lineinfo -O3"]
 )
 
 torch.library.define(

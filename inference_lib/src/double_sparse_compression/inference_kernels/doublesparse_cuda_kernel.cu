@@ -287,6 +287,8 @@ doublesparse(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
     }
   }
 
+  int num_rows = !PHASE ? non_zero_rows : m;
+
   int row_to_load = (blockIdx.x * WARP_COUNT) + threadIdx.x;
   int rows_to_load =
       min(WARP_COUNT, ((!PHASE ? non_zero_rows : m) - blockIdx.x * WARP_COUNT));
@@ -301,6 +303,10 @@ doublesparse(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
   if (!threadIdx.x) {
     s_row_offsets[rows_to_load] =
         row_offsets[blockIdx.x * WARP_COUNT + rows_to_load];
+  }
+
+  if (warp_id >= rows_to_load) {
+    return;
   }
 
   float acc{};
@@ -548,9 +554,7 @@ int doublesparse_matmul(int m, int n, int k, void *a_row_offsets,
                         int non_zero_rows, int batch_size,
                         // 16-bit
                         // Input
-                        void *X,
-                        void *y,
-                        float *d_workspace,
+                        void *X, void *y, void *d_workspace_ptr,
                         // Output
                         cudaStream_t stream, void *measurements,
                         uint32_t feature_flag) {
@@ -558,6 +562,8 @@ int doublesparse_matmul(int m, int n, int k, void *a_row_offsets,
 
   constexpr u32 WARP_COUNT = 16;
   constexpr u32 THREAD_COUNT = WARP_SIZE * WARP_COUNT;
+
+  float *d_workspace = static_cast<float *>(d_workspace_ptr);
 
   Timer *timer{};
   if (measurements) {

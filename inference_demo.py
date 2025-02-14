@@ -185,7 +185,7 @@ if __name__ == "__main__":
     max_new_tokens = 5
     with torch.no_grad():
         model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m)
-        text = "President"  # input()
+        text = "P"  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=max_new_tokens)
         e = time.time()
