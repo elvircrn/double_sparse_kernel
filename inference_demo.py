@@ -43,8 +43,8 @@ def decode_one_tokens(model, cur_token, input_pos, cache_position, past_key_valu
 def allocate_workspace_buffer(model):
     for tensor_name, m in model.named_children():
         if isinstance(m, SparsifiedLinear):
-            workspace_tensor = torch.tensor(m.k, dtype=torch.float32, device=m.a_row_offsets.device)
-            m.workspace = torch.nn.Parameter(workspace_tensor, requires_grad=False)
+            workspace_tensor = torch.empty(m.k, dtype=torch.float32, device=m.a_row_offsets.device)
+            m.workspace = workspace_tensor
         else:
             allocate_workspace_buffer(m)
 
@@ -182,10 +182,10 @@ if __name__ == "__main__":
 
     m = Mode(args.execution_mode)
 
-    max_new_tokens = 5
+    max_new_tokens = 15
     with torch.no_grad():
         model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m)
-        text = "P"  # input()
+        text = "President Carter"  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=max_new_tokens)
         e = time.time()

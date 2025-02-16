@@ -194,10 +194,9 @@ class SparsifiedLinear(torch.nn.Module):
         batch_size = x.shape[1]
         y = torch.zeros((1, batch_size, self.m), dtype=torch.float16, device=x.device).contiguous()
 
-        workspace = self.workspace
-        if workspace is None or batch_size != 1:
-            workspace = torch.empty(self.k * batch_size, dtype=torch.float32, requires_grad=False,
-                                     device=self.a_row_offsets.device)
+        # workspace = self.workspace
+        # if workspace is None or batch_size != 1:
+        workspace = torch.empty(self.k * batch_size, dtype=torch.float32, device=x.device).contiguous()
         self.K(
             self.m,
             self.n,
