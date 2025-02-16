@@ -190,11 +190,13 @@ def replace_and_save_quantized_layers(
                     ds_legacy = load_legacy_tensor(tensor_path)
                     ds_module = SparsifiedLinear.from_legacy(ds_legacy, 'cpu')
                 else:
+                    ds_module = torch.load(tensor_path, 'cpu', weights_only=False)
+                    """
                     try: 
-                        ds_module = torch.load(tensor_path, 'cpu')
                     except:
                         print('skipping')
                         continue
+                    """
                 setattr(current_model, tensor_name, ds_module)
         else:
             replace_and_save_quantized_layers(
