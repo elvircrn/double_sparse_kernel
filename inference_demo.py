@@ -61,7 +61,7 @@ class InferenceDemo:
 
         if flag == Mode.TORCH_PT:
             self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript)
-            self.model = torch.load(quantized_model_path)
+            self.model = torch.load(quantized_model_path, weights_only=False)
         elif flag == Mode.QUANTIZED:
             with suspend_nn_inits():
                 with torch.no_grad():
