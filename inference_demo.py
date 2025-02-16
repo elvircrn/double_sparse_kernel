@@ -14,6 +14,12 @@ torch.autograd.set_grad_enabled(False)
 
 torch.set_printoptions(sci_mode=False)
 
+torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+torch.backends.cudnn.allow_tf32 = False
+torch.set_float32_matmul_precision("highest")
+
 try:
     import safetensors  # noqa: F401
 
