@@ -8,14 +8,8 @@ The repository is based on [SparseGPT](https://github.com/IST-DASLab/sparsegpt) 
 
 ## Usage
 
-We also provide LLaMA pruning script with the very same interface:
+The simplest way to try this out is to run the following command:
 
 ```
-# Sparsify LLaMa with SparseGPT
-python llama.py meta-llama/Llama-2-7b-hf c4 --sparsity 0.5
+python inference_demo.py --execution_mode 1 --compressed_model_path elvircrn/llama2-7b-double-sparse-sparsity0.7-wikitext2-final --pretrained_model_path <Llama-2-7b-hf_path>
 ```
-
-## Other experiments
-
-For replicating other experiments (comparision with OBC a post-training pruning with finetuning)
-see `other_experiments` directory.
