@@ -9,6 +9,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, LlamaTokenizer, Stati
 
 from double_sparse_compression import SparsifiedLinear
 from modelutils import suspend_nn_inits
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 torch.autograd.set_grad_enabled(False)
 
@@ -19,6 +20,14 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
 torch.backends.cudnn.allow_tf32 = False
 torch.set_float32_matmul_precision("highest")
+
+from torch.backends.cuda import SDPBackend
+torch.backends.cuda.preferred_sdp_backend = SDPBackend.MATH
+
+torch.backends.cuda.enable_flash_sdp(False)       # Disable Flash Attention
+torch.backends.cuda.enable_mem_efficient_sdp(False) # Disable Memory-Efficient Attention
+torch.backends.cuda.enable_math_sdp(True)          # Force math-based attention (fallback)
+
 
 try:
     import safetensors  # noqa: F401
@@ -140,7 +149,8 @@ class InferenceDemo:
             if self.backend is None:
                 decode_one_tokens_compiled = decode_one_tokens
             else:
-                decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode="default", fullgraph=True)
+                with sdpa_kernel(SDPBackend.MATH):
+                    decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode="default", fullgraph=True)
 
             # Generate tokens one by one
             cache_position = torch.tensor([seq_len + 1], device="cuda")
@@ -188,10 +198,10 @@ if __name__ == "__main__":
 
     m = Mode(args.execution_mode)
 
-    max_new_tokens = 15
+    max_new_tokens = 16
     with torch.no_grad():
-        model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m)
-        text = "President Carter"  # input()
+        model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m, backend='cudagraphs')
+        text = "P"  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=max_new_tokens)
         e = time.time()
@@ -199,8 +209,9 @@ if __name__ == "__main__":
 
         print(f"Total duration = {e - s}s")
 
-        durations = np.array(timings_s[(max_new_tokens // 4):])
+        durations = np.array(timings_s[-4:])
 
-        print(f"Mean duration after caching initial input = {durations.mean()}")
-        print(f"Median duration after caching initial input = {np.median(durations)}")
-        print(f"Best duration after caching initial input = {np.min(durations)}")
+        print(f"Mean duration after caching initial input = {durations[-4:].mean()}")
+        print(f"Median duration after caching initial input = {np.median(durations[-4:])}")
+        print(f"Best duration after caching initial input = {np.min(durations[-4:])}")
+

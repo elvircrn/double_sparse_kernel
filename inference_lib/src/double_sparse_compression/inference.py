@@ -184,19 +184,16 @@ class SparsifiedLinear(torch.nn.Module):
     @torch.no_grad()
     def forward(self, x: T, flag=FeatureFlags.CSR_ASYNC) -> T:
         """
-        Forward matmul operation. The kernel currently only supports matvec. Therefore, to fully implement matmuls,
-        a for loop is used which is horribly inefficient, but will do for now.
+        Forward matmul operation.
         @param x: Input tensor.
         @param flag: Feature flag.
-        @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
+        @return: A tensor resulting from a multiplication between the Dobuel Sparse tensor and input tensor x.
         """
         if not hasattr(self, 'K'): self.K = get_doublesparse_mul()
         batch_size = x.shape[1]
-        y = torch.zeros((1, batch_size, self.m), dtype=torch.float16, device=x.device).contiguous()
-
-        # workspace = self.workspace
-        # if workspace is None or batch_size != 1:
-        workspace = torch.empty(self.k * batch_size, dtype=torch.float32, device=x.device).contiguous()
+        y = torch.empty((1, batch_size, self.m), dtype=torch.float16, device=x.device)
+        workspace = self.workspace
+        if workspace is None or batch_size != 1: workspace = torch.empty(self.k * batch_size, dtype=torch.float32, device=x.device).contiguous()
         self.K(
             self.m,
             self.n,

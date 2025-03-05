@@ -35,5 +35,5 @@ def call_doublesparse_mul_timer(*args):
 
 
 @torch.library.register_fake("doublesparse_cuda::doublesparse_mul")
-def spqr_mul_meta(m, n, k, a_row_offsets, a_col_vals, b_row_offsets, b_col_vals, non_zero_rows, batch_size, x, f, Y, out):
+def spqr_mul_meta(m, n, k, a_row_offsets, a_col_vals, b_row_offsets, b_col_vals, non_zero_rows, batch_size, x, f, workspace, Y, out):
     return
