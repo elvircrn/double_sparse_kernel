@@ -318,8 +318,8 @@ __global__ void doublesparse_fp8(
     float *__restrict__ _workspace, u32 smem_size_fp32) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
-  __shared__ half lut[1 << 8];
-  if (threadIdx.x < 256) lut[threadIdx.x] = cvt_fp8_to_halfraw(threadIdx.x);
+    __shared__ half lut[1 << 8];
+    if (threadIdx.x < 256) lut[threadIdx.x] = cvt_fp8_to_halfraw(threadIdx.x);
 
   half *y = _y + blockIdx.y * m;
   u32 smem_size_fp16 = smem_size_fp32 * 2;
@@ -399,6 +399,14 @@ __global__ void doublesparse_fp8(
     int row_start = s_row_offsets[warp_id];
     int row_end = s_row_offsets[warp_id + 1];
     auto row_ptr = row_start + lane_id;
+
+
+    if (row_end - row_start > 256) {
+
+    }
+
+
+
 
     for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
       auto val4 = to_float_x4(values[row_ptr], lut);
