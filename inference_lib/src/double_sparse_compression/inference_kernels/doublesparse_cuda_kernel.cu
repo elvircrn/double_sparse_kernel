@@ -269,7 +269,7 @@ DEVICE_INLINE __half_raw cvt_fp8_to_halfraw(const __nv_fp8_storage_t x) {
   return res;
 }
 
-DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed) {
+DEVICE_INLINE Vec<float, 4> _to_float_x4(uint32_t src_packed) {
   Vec<float, 4> res;
   float2 *f2 = reinterpret_cast<float2 *>(&res.d);
   half h0 = cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu));
@@ -279,6 +279,24 @@ DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed) {
   half h2 = cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu));
   src_packed >>= 8u;
   half h3 = cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu));
+
+  f2[0] = __half22float2(make_half2(h0, h1));
+  f2[1] = __half22float2(make_half2(h2, h3));
+
+  return res;
+}
+
+
+DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed, const half* lut) {
+  Vec<float, 4> res;
+  float2 *f2 = reinterpret_cast<float2 *>(&res.d);
+  half h0 = lut[src_packed & 0xFFu];
+  src_packed >>= 8u;
+  half h1 = lut[src_packed & 0xFFu];
+  src_packed >>= 8u;
+  half h2 = lut[src_packed & 0xFFu];
+  src_packed >>= 8u;
+  half h3 = lut[src_packed & 0xFFu];
 
   f2[0] = __half22float2(make_half2(h0, h1));
   f2[1] = __half22float2(make_half2(h2, h3));
@@ -300,6 +318,8 @@ __global__ void doublesparse_fp8(
     float *__restrict__ _workspace, u32 smem_size_fp32) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
+  __shared__ half lut[1 << 8];
+  if (threadIdx.x < 256) lut[threadIdx.x] = cvt_fp8_to_halfraw(threadIdx.x);
 
   half *y = _y + blockIdx.y * m;
   u32 smem_size_fp16 = smem_size_fp32 * 2;
@@ -381,7 +401,7 @@ __global__ void doublesparse_fp8(
     auto row_ptr = row_start + lane_id;
 
     for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
-      auto val4 = to_float_x4(values[row_ptr]);
+      auto val4 = to_float_x4(values[row_ptr], lut);
       auto col4 =
           *reinterpret_cast<const Vec<unsigned short, 4> *>(columns + row_ptr);
 #pragma unroll
@@ -434,7 +454,7 @@ __global__ void doublesparse_fp8(
       }
 
       for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
-        auto val4 = to_float_x4(values[row_ptr]);
+        auto val4 = to_float_x4(values[row_ptr], lut);
         auto col4 = *reinterpret_cast<const Vec<unsigned short, 4> *>(columns +
                                                                       row_ptr);
         bool done = false;
