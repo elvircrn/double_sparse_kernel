@@ -233,11 +233,11 @@ doublesparse_naive(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
   }
 }
 
-__device__ Vec<float, 4> to_float_x4(uint32_t const &src_packed) {
+DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t const &src_packed) {
   __half2_raw l2 = __nv_cvt_fp8x2_to_halfraw2(
-      src_packed & 0xFFFF, __nv_fp8_interpretation_t::__NV_E4M3);
+      src_packed & 0xFFFFu, __NV_E4M3);
   __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(
-      (src_packed >> 16u) & 0xFFFF, __nv_fp8_interpretation_t::__NV_E4M3);
+      (src_packed >> 16u) & 0xFFFFu, __NV_E4M3);
   float2 l2_fp32 = __half22float2(l2);
   float2 h2_fp32 = __half22float2(h2);
   return Vec<float, 4>{.d = {l2_fp32.x, l2_fp32.y, h2_fp32.x, h2_fp32.y}};
@@ -343,6 +343,7 @@ __global__ void doublesparse_fp8(
       auto val4 = to_float_x4(values[row_ptr]);
       auto col4 =
           *reinterpret_cast<const Vec<unsigned short, 4> *>(columns + row_ptr);
+#pragma unroll
       for (int i = 0; i < 4; i++) {
         auto v = val4.d[i];
         if constexpr (!PHASE) {
@@ -396,8 +397,8 @@ __global__ void doublesparse_fp8(
         auto col4 = *reinterpret_cast<const Vec<unsigned short, 4> *>(columns +
                                                                       row_ptr);
         bool done = false;
+#pragma unroll
         for (int i = 0; i < 4; i++) {
-
           if (col4.d[i] < lower_col_limit || (col4.d[i] >= upper_col_limit)) {
             done = true;
           } else {

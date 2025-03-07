@@ -70,13 +70,10 @@ struct Result {
 };
 
 Result mul_with_time(const SparsifiedLinear &d_s, XType *d_x, XType *d_y,
-                     float *measurements, int k) {
+                     float *measurements, int k, Features features) {
   u32 *d_workspace;
   cudaMalloc(reinterpret_cast<void **>(&d_workspace), k * 165536 * sizeof(u32));
   cudaDeviceSynchronize();
-  Features features{._ = 0u};
-  features.flags.is_async = false;
-  features.flags.is_fp8 = true;
 
   doublesparse_matmul(d_s.m, d_s.n, d_s.k, d_s.d_a_row_offsets,
                       d_s.d_a_col_vals, d_s.d_b_row_offsets, d_s.d_b_col_vals,
@@ -103,22 +100,30 @@ SparsifiedLinear from_path(const std::string &base_path) {
 }
 
 int main() {
-  std::string tag = "baseline_fp16_csr";
+  std::string tag = "baseline_fp8_csr";
+  Features features{._ = 0u};
+  features.flags.is_async = false;
+  features.flags.is_fp8 = true;
+
   std::ofstream results("results.txt", std::ios_base::app);
   static constexpr int XY_SIZE = 11008 * 4;
   static constexpr int NUM_REPS = 512;
   int num_layers = 20;
   auto d_x = device_from_size<uint16_t>(XY_SIZE);
   auto d_y = device_from_size<uint16_t>(XY_SIZE);
-  const std::vector<std::string> &layer_names{
+  const std::vector<std::string> &_layer_names{
       "mlp.down_proj",    "mlp.gate_proj",    "mlp.up_proj",
       "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
       "self_attn.v_proj"};
+
+  const std::vector<std::string> &layer_names{
+    "self_attn.k_proj"};
 
   auto measurements = new float[NUM_REPS];
 
   float mean_runtime = 0.f;
   int tests{};
+
 
   for (int i = 0; i < num_layers; i++) {
     for (const auto &layer_name : layer_names) {
@@ -128,7 +133,7 @@ int main() {
 
       SparsifiedLinear sparsified_linear = from_path(quant_linear_path);
       auto result =
-          mul_with_time(sparsified_linear, d_x, d_y, measurements, 1);
+          mul_with_time(sparsified_linear, d_x, d_y, measurements, 1, features);
 
       mean_runtime += result.min;
 
