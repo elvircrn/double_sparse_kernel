@@ -286,8 +286,7 @@ DEVICE_INLINE Vec<float, 4> _to_float_x4(uint32_t src_packed) {
   return res;
 }
 
-
-DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed, const half* lut) {
+DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed, const half *lut) {
   Vec<float, 4> res;
   float2 *f2 = reinterpret_cast<float2 *>(&res.d);
   half h0 = lut[src_packed & 0xFFu];
@@ -318,8 +317,10 @@ __global__ void doublesparse_fp8(
     float *__restrict__ _workspace, u32 smem_size_fp32) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
-    __shared__ half lut[1 << 8];
-    if (threadIdx.x < 256) lut[threadIdx.x] = cvt_fp8_to_halfraw(threadIdx.x);
+  __shared__ half s_lut_fp8[1 << 8];
+  for (int i = threadIdx.x; i < 256; i += WARP_COUNT * WARP_SIZE) {
+    s_lut_fp8[i] = cvt_fp8_to_halfraw(i);
+  }
 
   half *y = _y + blockIdx.y * m;
   u32 smem_size_fp16 = smem_size_fp32 * 2;
@@ -400,9 +401,8 @@ __global__ void doublesparse_fp8(
     int row_end = s_row_offsets[warp_id + 1];
     auto row_ptr = row_start + lane_id;
 
-
     for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
-      auto val4 = to_float_x4(values[row_ptr], lut);
+      auto val4 = to_float_x4(values[row_ptr], s_lut_fp8);
       auto col4 =
           *reinterpret_cast<const Vec<unsigned short, 4> *>(columns + row_ptr);
 #pragma unroll
@@ -455,7 +455,7 @@ __global__ void doublesparse_fp8(
       }
 
       for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
-        auto val4 = to_float_x4(values[row_ptr], lut);
+        auto val4 = to_float_x4(values[row_ptr], s_lut_fp8);
         auto col4 = *reinterpret_cast<const Vec<unsigned short, 4> *>(columns +
                                                                       row_ptr);
         bool done = false;
