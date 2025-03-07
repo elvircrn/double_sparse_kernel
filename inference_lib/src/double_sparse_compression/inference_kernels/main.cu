@@ -111,12 +111,12 @@ int main() {
   int num_layers = 20;
   auto d_x = device_from_size<uint16_t>(XY_SIZE);
   auto d_y = device_from_size<uint16_t>(XY_SIZE);
-  const std::vector<std::string> &_layer_names{
+  const std::vector<std::string> &layer_names{
       "mlp.down_proj",    "mlp.gate_proj",    "mlp.up_proj",
       "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
       "self_attn.v_proj"};
 
-  const std::vector<std::string> &layer_names{
+  const std::vector<std::string> &_layer_names{
     "self_attn.k_proj"};
 
   auto measurements = new float[NUM_REPS];

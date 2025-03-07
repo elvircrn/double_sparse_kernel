@@ -233,14 +233,58 @@ doublesparse_naive(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
   }
 }
 
-DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t const &src_packed) {
-  __half2_raw l2 = __nv_cvt_fp8x2_to_halfraw2(
-      src_packed & 0xFFFFu, __NV_E4M3);
-  __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(
-      (src_packed >> 16u) & 0xFFFFu, __NV_E4M3);
-  float2 l2_fp32 = __half22float2(l2);
-  float2 h2_fp32 = __half22float2(h2);
-  return Vec<float, 4>{.d = {l2_fp32.x, l2_fp32.y, h2_fp32.x, h2_fp32.y}};
+DEVICE_INLINE __half_raw cvt_fp8_to_halfraw(const __nv_fp8_storage_t x) {
+  __half_raw res;
+  res.x = 0U;
+  unsigned short int ur = x;
+  ur = (unsigned short int)(ur << 8U);
+
+  unsigned short int sign = ur & 0x8000U;
+  unsigned short int exponent =
+      (unsigned short int)(((ur & 0x7800U) >> 1U) + 0x2000U);
+  unsigned short int mantissa = (ur & 0x0700U) >> 1U;
+  unsigned char absx = 0x7FU & (unsigned char)x;
+
+  if (absx == 0x7FU) // NaN
+  {
+    ur = 0x7FFFU; // fp16 canonical NaN, discard sign
+  } else if (exponent == 0x2000U) {
+    // zero or denormal
+    if (mantissa != 0U) {
+      // normalize
+      mantissa = (unsigned short int)(mantissa << 1U);
+      while ((mantissa & 0x0400U) == 0U) {
+        mantissa = (unsigned short int)(mantissa << 1U);
+        exponent = (unsigned short int)(exponent - 0x0400U);
+      }
+      // discard implicit leading bit
+      mantissa &= 0x03FFU;
+    } else { // Zero
+      exponent = 0U;
+    }
+
+    ur = (sign | exponent) | mantissa;
+  } else {
+    ur = (sign | exponent) | mantissa;
+  }
+  res.x = ur;
+  return res;
+}
+
+DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed) {
+  Vec<float, 4> res;
+  res.d[0] = __half2float(
+      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  src_packed >>= 8u;
+  res.d[1] = __half2float(
+      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  src_packed >>= 8u;
+  res.d[2] = __half2float(
+      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  src_packed >>= 8u;
+  res.d[3] = __half2float(
+      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  return res;
 }
 
 template <int PHASE, int WARP_COUNT>
@@ -283,8 +327,6 @@ __global__ void doublesparse_fp8(
       return;
     }
   }
-
-  int num_rows = !PHASE ? non_zero_rows : m;
 
   int row_to_load = (blockIdx.x * WARP_COUNT) + threadIdx.x;
   int rows_to_load =
@@ -770,32 +812,34 @@ __global__ void convert_to_fp8(
     const u32 *row_offsets_value_aligned_fp8,
     // Outputs
     u64 *columns_fp8, u32 *values_fp8) {
-  for (int i = 0; i < rows; i++) {
-    int colval_fp8_id{};
-    for (int j = row_offsets[i]; j < row_offsets[i + 1];
-         j += FP8_VALUES_CHUNK_SIZE) {
-      u32 vals_x4{};
-      u64 cols_x4{};
-      u32 colval_id{};
-      ColVal col_val;
-      for (int k = 0; k < FP8_VALUES_CHUNK_SIZE; k++) {
-        if (j + k < row_offsets[i + 1]) {
-          col_val = ColVal{._ = col_vals[j + k]};
-        } else {
-          col_val.members.v = __int2half_rd(0);
-        }
-        auto value_fp8 = __nv_fp8_e4m3(col_val.members.v);
-        vals_x4 |= uint32_t(*reinterpret_cast<unsigned char *>(&(value_fp8)))
-                   << (colval_id * FP8_BITS);
-        cols_x4 |= static_cast<uint64_t>(col_val.members.c)
-                   << (static_cast<uint64_t>(colval_id) *
-                       static_cast<uint64_t>(FP16_BITS));
-        colval_id++;
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  if (i >= rows) {
+    return;
+  }
+  int colval_fp8_id{};
+  for (int j = row_offsets[i]; j < row_offsets[i + 1];
+       j += FP8_VALUES_CHUNK_SIZE) {
+    u32 vals_x4{};
+    u64 cols_x4{};
+    u32 colval_id{};
+    ColVal col_val;
+    for (int k = 0; k < FP8_VALUES_CHUNK_SIZE; k++) {
+      if (j + k < row_offsets[i + 1]) {
+        col_val = ColVal{._ = col_vals[j + k]};
+      } else {
+        col_val.members.v = __int2half_rd(0);
       }
-      values_fp8[row_offsets_value_aligned_fp8[i] + colval_fp8_id] = vals_x4;
-      columns_fp8[row_offsets_value_aligned_fp8[i] + colval_fp8_id] = cols_x4;
-      colval_fp8_id++;
+      auto value_fp8 = __nv_fp8_e4m3(col_val.members.v);
+      vals_x4 |= uint32_t(*reinterpret_cast<unsigned char *>(&(value_fp8)))
+                 << (colval_id * FP8_BITS);
+      cols_x4 |= static_cast<uint64_t>(col_val.members.c)
+                 << (static_cast<uint64_t>(colval_id) *
+                     static_cast<uint64_t>(FP16_BITS));
+      colval_id++;
     }
+    values_fp8[row_offsets_value_aligned_fp8[i] + colval_fp8_id] = vals_x4;
+    columns_fp8[row_offsets_value_aligned_fp8[i] + colval_fp8_id] = cols_x4;
+    colval_fp8_id++;
   }
 }
 
@@ -843,10 +887,10 @@ void convert_sync(FP16MatrixCSR mat_fp16[2], FP8MatrixCSR mat_fp8[2]) {
   }
   cudaDeviceSynchronize();
   for (int i = 0; i < 2; i++) {
-    convert_to_fp8<<<1, 1>>>(mat_fp8[i].rows, mat_fp16[i].d_row_offsets,
-                             mat_fp16[i].d_col_vals,
-                             mat_fp8[i].d_values_row_offsets,
-                             mat_fp8[i].d_columns, mat_fp8[i].d_values);
+    convert_to_fp8<<<UPDIV(mat_fp8[i].rows, 256), 256>>>(
+        mat_fp8[i].rows, mat_fp16[i].d_row_offsets, mat_fp16[i].d_col_vals,
+        mat_fp8[i].d_values_row_offsets, mat_fp8[i].d_columns,
+        mat_fp8[i].d_values);
   }
   cudaDeviceSynchronize();
 }
