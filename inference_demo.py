@@ -64,6 +64,14 @@ def allocate_workspace_buffer(model):
             allocate_workspace_buffer(m)
 
 
+def convert_to_fp8(model):
+    for tensor_name, m in model.named_children():
+        if isinstance(m, SparsifiedLinear):
+            workspace_tensor = torch.empty(m.k, dtype=torch.float32, device=m.a_row_offsets.device)
+            m.workspace = workspace_tensor
+        else:
+            allocate_workspace_buffer(m)
+
 class InferenceDemo:
     def __init__(
             self, pretrained_model_path: str, quantized_model_path, flag, device="cuda", torchscript=False, backend=None
@@ -120,6 +128,8 @@ class InferenceDemo:
         self.model.eval()
 
         allocate_workspace_buffer(self.model)
+
+        convert_to_fp8(self.model)
 
     def generate(self, input_str, max_new_tokens) -> Tuple:
         inputs = self.tokenizer(input_str, return_tensors="pt").to(device=self.device)

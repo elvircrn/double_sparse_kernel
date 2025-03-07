@@ -114,7 +114,7 @@ struct Timer {
 
   inline float end_and_measure() {
     float time_ms{};
-    cudaEventRecord(ce_stop, nullptr);
+    cudaEventRecord(ce_stop, stream);
     cudaEventSynchronize(ce_stop);
     cudaEventElapsedTime(&time_ms, ce_start, ce_stop);
     // Returns ms

@@ -26,10 +26,10 @@
 int doublesparse_matmul(
     // W and meta
     int m, int n, int k,
-    void *a_row_offsets,
-    void *a_col_ids,
-    void *b_row_offsets,
-    void *b_col_ids,
+    u32 *a_row_offsets,
+    u32 *a_col_ids,
+    u32 *b_row_offsets,
+    u32 *b_col_ids,
     int non_zero_rows,
     int batch_size,
     // 16-bit
@@ -61,10 +61,10 @@ void doublesparse_mul(
 
   int err = doublesparse_matmul(
       m, n, k,
-      a_row_offsets.data_ptr(),
-      a_col_val.data_ptr(),
-      b_row_offsets.data_ptr(),
-      b_col_val.data_ptr(),
+      (u32*) a_row_offsets.data_ptr<int>(),
+      (u32*) a_col_val.data_ptr<int>(),
+      (u32*) b_row_offsets.data_ptr<int>(),
+      (u32*) b_col_val.data_ptr<int>(),
       non_zero_rows,
       batch_size,
       X.data_ptr(),
@@ -92,10 +92,10 @@ void doublesparse_mul_timer(
 
   int err = doublesparse_matmul(
       m, n, k,
-      a_row_offsets.data_ptr(),
-      a_col_val.data_ptr(),
-      b_row_offsets.data_ptr(),
-      b_col_val.data_ptr(),
+      (u32*) a_row_offsets.data_ptr<int>(),
+      (u32*) a_col_val.data_ptr<int>(),
+      (u32*) b_row_offsets.data_ptr<int>(),
+      (u32*) b_col_val.data_ptr<int>(),
       non_zero_rows,
       batch_size,
       X.data_ptr(), Y.data_ptr(),

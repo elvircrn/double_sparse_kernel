@@ -17,6 +17,7 @@
 #include "common.cuh"
 
 #include <cuda_fp16.h>
+#include <cuda_fp8.h>
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
 
@@ -34,21 +35,6 @@ __device__ void printf_float2(float2 x) { printf("%f %f\n", x.x, x.y); }
 #define DEVICE_INLINE __forceinline__ __device__
 
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
-
-half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s,
-                                const half2 &z) {
-  const half2 &res = __hmul2(s, __hsub2(q, z));
-  return res;
-}
-
-template <class Bit_t, class Scalar_t>
-DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
-  if constexpr (std::is_same<Bit_t, half>::value) {
-    return __hmul(s, __hsub(q, z));
-  } else {
-    return __hmul(s, __hsub(__uint2half_rd(q, z)));
-  }
-}
 
 #define INT2_TO_HALF2(v)                                                       \
   make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
@@ -88,13 +74,6 @@ template <class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
   } else {
     return ptr;
   }
-}
-
-DEVICE_INLINE float add_and_accum(float a, float b) { return a + b; }
-
-DEVICE_INLINE half add_and_accum(const half2 &a, const half2 &b) {
-  half2 r = __hadd2(a, b);
-  return __hadd(r.x, r.y);
 }
 
 template <class T> DEVICE_INLINE u16 get_col(T m) {
@@ -140,6 +119,10 @@ __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
   return v;
 }
 
+template <class T, int sz> struct Vec {
+  T d[sz];
+};
+
 union Features {
   uint32_t _;
 
@@ -148,11 +131,12 @@ union Features {
     uint32_t is_csc : 1;
     uint32_t is_split : 1;
     uint32_t is_naive : 1;
-    uint32_t rest : 28;
+    uint32_t is_fp8 : 1;
+    uint32_t rest : 27;
   } flags;
 };
 
-DEVICE_INLINE float reduce_final(float val) {
+template <class T> DEVICE_INLINE T reduce_final(T val) {
   for (int offset = 16; offset > 0; offset /= 2) {
     val += __shfl_down_sync(0xFFFFFFFF, val, offset);
   }
@@ -243,6 +227,205 @@ doublesparse_naive(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
   if (!lane_id) {
     if constexpr (!PHASE) {
       workspace_out[row] = acc;
+    } else {
+      y[row] = __float2half(acc);
+    }
+  }
+}
+
+__device__ Vec<float, 4> to_float_x4(uint32_t const &src_packed) {
+  __half2_raw l2 = __nv_cvt_fp8x2_to_halfraw2(
+      src_packed & 0xFFFF, __nv_fp8_interpretation_t::__NV_E4M3);
+  __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(
+      (src_packed >> 16u) & 0xFFFF, __nv_fp8_interpretation_t::__NV_E4M3);
+  float2 l2_fp32 = __half22float2(l2);
+  float2 h2_fp32 = __half22float2(h2);
+  return Vec<float, 4>{.d = {l2_fp32.x, l2_fp32.y, h2_fp32.x, h2_fp32.y}};
+}
+
+template <int PHASE, int WARP_COUNT>
+__global__ void doublesparse_fp8(
+    int m, int n, int k,
+
+    const u32 *__restrict__ a_row_offsets, const u64 *__restrict__ a_columns,
+    const u32 *__restrict__ a_values,
+
+    const u32 *__restrict__ b_row_offsets, const u64 *__restrict__ b_columns,
+    const u32 *__restrict__ b_values,
+
+    int non_zero_rows, int batch_size, const half *__restrict__ x, half *_y,
+    float *__restrict__ _workspace, u32 smem_size_fp32) {
+  extern __shared__ half2 s_x2[];
+  __shared__ u32 s_row_offsets[WARP_COUNT + 1];
+
+  half *y = _y + blockIdx.y * m;
+  u32 smem_size_fp16 = smem_size_fp32 * 2;
+  auto s_x = reinterpret_cast<half *>(s_x2);
+
+  float *workspace = _workspace + blockIdx.y * k;
+  const half2 *x2 = reinterpret_cast<const half2 *>(x + blockIdx.y * n);
+
+  const auto warp_id = threadIdx.x / WARP_SIZE;
+  auto lane_id = threadIdx.x & 0x1f;
+
+  auto row = blockIdx.x * WARP_COUNT + warp_id;
+
+  u32 available_warps{};
+
+  if constexpr (!PHASE) {
+    available_warps = min(WARP_COUNT, non_zero_rows - blockIdx.x * WARP_COUNT);
+    if (row >= non_zero_rows) {
+      return;
+    }
+  } else {
+    available_warps = min(WARP_COUNT, m - blockIdx.x * WARP_COUNT);
+    if (row >= m) {
+      return;
+    }
+  }
+
+  int num_rows = !PHASE ? non_zero_rows : m;
+
+  int row_to_load = (blockIdx.x * WARP_COUNT) + threadIdx.x;
+  int rows_to_load =
+      min(WARP_COUNT, ((!PHASE ? non_zero_rows : m) - blockIdx.x * WARP_COUNT));
+
+  const u32 *row_offsets = !PHASE ? b_row_offsets : a_row_offsets;
+
+  if (threadIdx.x < WARP_COUNT &&
+      row_to_load < (blockIdx.x * WARP_COUNT) + rows_to_load) {
+    s_row_offsets[threadIdx.x] = row_offsets[row_to_load];
+  }
+
+  if (!threadIdx.x) {
+    s_row_offsets[rows_to_load] =
+        row_offsets[blockIdx.x * WARP_COUNT + rows_to_load];
+  }
+
+  if (warp_id >= rows_to_load) {
+    return;
+  }
+
+  float acc{};
+  // Pages of x strips.
+  auto pages = !PHASE ? updiv(n / 2, smem_size_fp32)
+                      : updiv(non_zero_rows, smem_size_fp32);
+
+  const u64 *columns;
+  const u32 *values;
+  if (!PHASE) {
+    columns = b_columns;
+    values = b_values;
+  } else {
+    columns = a_columns;
+    values = a_values;
+  }
+
+  u32 avilable_threads = available_warps * WARP_SIZE;
+
+  if (pages == 1) {
+    auto x2_to_load = !PHASE ? (n / 2) : non_zero_rows;
+    for (int i = threadIdx.x; i < x2_to_load; i += avilable_threads) {
+      if constexpr (!PHASE) {
+        s_x2[i] = x2[i];
+      } else {
+        reinterpret_cast<float *>(s_x2)[i] = workspace[i];
+      }
+    }
+
+    __syncthreads();
+
+    int row_start = s_row_offsets[warp_id];
+    int row_end = s_row_offsets[warp_id + 1];
+    auto row_ptr = row_start + lane_id;
+
+    for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
+      auto val4 = to_float_x4(values[row_ptr]);
+      auto col4 =
+          *reinterpret_cast<const Vec<unsigned short, 4> *>(columns + row_ptr);
+      for (int i = 0; i < 4; i++) {
+        auto v = val4.d[i];
+        if constexpr (!PHASE) {
+          acc += __half2float(s_x[col4.d[i]]) * v;
+        } else {
+          acc += reinterpret_cast<float *>(s_x2)[col4.d[i]] * v;
+        }
+      }
+    }
+  } else {
+    __syncthreads();
+
+    auto row_start = s_row_offsets[warp_id];
+    auto row_end = s_row_offsets[warp_id + 1];
+    auto row_ptr = row_start + lane_id;
+
+    for (int page = 0; page < pages; page++) {
+      const u32 page_offset = page * smem_size_fp32;
+
+      __syncthreads();
+
+      int x_limit{};
+      if constexpr (!PHASE) {
+        auto x2_to_load = n / 2 - page_offset;
+        x_limit = min(smem_size_fp32, x2_to_load);
+        for (int i = threadIdx.x; i < x_limit; i += avilable_threads) {
+          s_x2[i] = x2[i];
+        }
+      } else {
+        auto x2_to_load = non_zero_rows - page_offset;
+        x_limit = min(smem_size_fp32, x2_to_load);
+        for (int i = threadIdx.x; i < x_limit; i += avilable_threads) {
+          reinterpret_cast<float *>(s_x2)[i] = workspace[page_offset + i];
+        }
+      }
+
+      __syncthreads();
+
+      u32 upper_col_limit{}, lower_col_limit{};
+
+      if constexpr (!PHASE) {
+        lower_col_limit = smem_size_fp16 * page;
+        upper_col_limit = smem_size_fp16 * (page + 1);
+      } else {
+        lower_col_limit = smem_size_fp32 * page;
+        upper_col_limit = smem_size_fp32 * (page + 1);
+      }
+
+      for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
+        auto val4 = to_float_x4(values[row_ptr]);
+        auto col4 = *reinterpret_cast<const Vec<unsigned short, 4> *>(columns +
+                                                                      row_ptr);
+        bool done = false;
+        for (int i = 0; i < 4; i++) {
+
+          if (col4.d[i] < lower_col_limit || (col4.d[i] >= upper_col_limit)) {
+            done = true;
+          } else {
+            done = false;
+            auto v = val4.d[i];
+            if constexpr (!PHASE) {
+              auto local_c = col4.d[i] - page * smem_size_fp16;
+              acc += __half2float(s_x[local_c]) * v;
+            } else {
+              auto local_c = col4.d[i] - page * smem_size_fp32;
+              acc += reinterpret_cast<float *>(s_x2)[local_c] * v;
+            }
+          }
+        }
+        if (done) {
+          break;
+        }
+      }
+
+      x2 += smem_size_fp32;
+    }
+  }
+
+  acc = reduce_final(acc);
+
+  if (!lane_id) {
+    if constexpr (!PHASE) {
+      workspace[row] = acc;
     } else {
       y[row] = __float2half(acc);
     }
@@ -526,6 +709,15 @@ doublesparse_csc(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
           batch_size, (half *)X, (half *)y, d_workspace, SMEM_SIZE_FP32,       \
           global_offset)
 
+#define CALL_DOUBLE_MATMUL_FP8(P, SMEM_SIZE_FP32, K, given_stream)             \
+  doublesparse_fp8<P, WARP_COUNT>                                              \
+      <<<dim3(updiv((!P ? non_zero_rows : m), WARP_COUNT), batch_size, 1),     \
+         dim3(THREAD_COUNT), sizeof(int) * (SMEM_SIZE_FP32), given_stream>>>(  \
+          m, n, k, mat8[0].d_values_row_offsets, mat8[0].d_columns,            \
+          mat8[0].d_values, mat8[1].d_values_row_offsets, mat8[1].d_columns,   \
+          mat8[1].d_values, non_zero_rows, batch_size, (half *)X, (half *)y,   \
+          d_workspace, SMEM_SIZE_FP32)
+
 #define CALL_DOUBLE_MATMUL_CSC(P, SMEM_SIZE_FP32)                              \
   doublesparse_csc<WARP_COUNT>                                                 \
       <<<dim3(updiv(!P ? non_zero_rows : m, WARP_COUNT), batch_size, 1),       \
@@ -534,7 +726,7 @@ doublesparse_csc(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
           (u32 *)b_row_offsets, (ColVal *)b_col_vals, non_zero_rows,           \
           batch_size, (half *)X, (half *)y, d_workspace, SMEM_SIZE_FP32)
 
-#define KERNEL_CALL                                                            \
+#define KERNEL_CALL_FP16                                                       \
   if (!features.flags.is_csc && !features.flags.is_naive) {                    \
     CALL_DOUBLE_MATMUL(0, std::min((1 << 13), updiv(n, 2)), doublesparse,      \
                        stream, 0);                                             \
@@ -549,8 +741,117 @@ doublesparse_csc(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
     CALL_DOUBLE_MATMUL_CSC(1, std::min((1 << 13), k));                         \
   }
 
-int doublesparse_matmul(int m, int n, int k, void *a_row_offsets,
-                        void *a_col_vals, void *b_row_offsets, void *b_col_vals,
+#define KERNEL_CALL_FP8                                                        \
+  CALL_DOUBLE_MATMUL_FP8(0, std::min((1 << 13), updiv(n, 2)), stream, 0);      \
+  CALL_DOUBLE_MATMUL_FP8(1, std::min((1 << 13), k), stream, 0);
+
+static constexpr int FP8_BITS = 8;
+static constexpr int FP16_BITS = 16;
+static constexpr int FP8_VALUES_CHUNK_SIZE = 4;
+static constexpr int FP8_COLUMNS_CHUNK_SIZE = FP8_VALUES_CHUNK_SIZE / 2;
+
+__global__ void fill_offsets_fp8(int rows, const u32 *row_offsets,
+                                 u32 *row_offsets_value_aligned_fp8) {
+  row_offsets_value_aligned_fp8[0] = 0;
+  for (int i = 0; i < rows; i++) {
+    int nnz = row_offsets[i + 1] - row_offsets[i];
+    int nnz_vals = UPDIV(nnz, FP8_VALUES_CHUNK_SIZE);
+    row_offsets_value_aligned_fp8[i + 1] =
+        row_offsets_value_aligned_fp8[i] + nnz_vals;
+  }
+}
+
+__global__ void convert_to_fp8(
+    // Inputs
+    // FP16
+    u32 rows, const u32 *row_offsets, const u32 *col_vals,
+    // FP8
+    const u32 *row_offsets_value_aligned_fp8,
+    // Outputs
+    u64 *columns_fp8, u32 *values_fp8) {
+  for (int i = 0; i < rows; i++) {
+    int colval_fp8_id{};
+    for (int j = row_offsets[i]; j < row_offsets[i + 1];
+         j += FP8_VALUES_CHUNK_SIZE) {
+      u32 vals_x4{};
+      u64 cols_x4{};
+      u32 colval_id{};
+      ColVal col_val;
+      for (int k = 0; k < FP8_VALUES_CHUNK_SIZE; k++) {
+        if (j + k < row_offsets[i + 1]) {
+          col_val = ColVal{._ = col_vals[j + k]};
+        } else {
+          col_val.members.v = __int2half_rd(0);
+        }
+        auto value_fp8 = __nv_fp8_e4m3(col_val.members.v);
+        vals_x4 |= uint32_t(*reinterpret_cast<unsigned char *>(&(value_fp8)))
+                   << (colval_id * FP8_BITS);
+        cols_x4 |= static_cast<uint64_t>(col_val.members.c)
+                   << (static_cast<uint64_t>(colval_id) *
+                       static_cast<uint64_t>(FP16_BITS));
+        colval_id++;
+      }
+      values_fp8[row_offsets_value_aligned_fp8[i] + colval_fp8_id] = vals_x4;
+      columns_fp8[row_offsets_value_aligned_fp8[i] + colval_fp8_id] = cols_x4;
+      colval_fp8_id++;
+    }
+  }
+}
+
+struct FP16MatrixCSR {
+  int rows;
+  u32 *d_row_offsets;
+  u32 *d_col_vals;
+};
+
+struct FP8MatrixCSR {
+  int rows;
+  u32 *d_values_row_offsets;
+  u32 *d_values;
+  u64 *d_columns;
+
+  void allocate() {
+    cudaMalloc(reinterpret_cast<void **>(&d_values_row_offsets),
+               sizeof(u32) * (rows + 1));
+  }
+
+  void free() {
+    cudaFree(d_values_row_offsets);
+    cudaFree(d_values);
+    cudaFree(d_columns);
+  }
+};
+
+void convert_sync(FP16MatrixCSR mat_fp16[2], FP8MatrixCSR mat_fp8[2]) {
+  for (int i = 0; i < 2; i++) {
+    fill_offsets_fp8<<<1, 1>>>(mat_fp8[i].rows, mat_fp16[i].d_row_offsets,
+                               mat_fp8[i].d_values_row_offsets);
+  }
+  cudaDeviceSynchronize();
+  u32 nnzs[2];
+  for (int i = 0; i < 2; i++) {
+    cudaMemcpy(nnzs + i, mat_fp8[i].d_values_row_offsets + mat_fp8[i].rows,
+               sizeof(u32), cudaMemcpyDeviceToHost);
+  }
+  cudaDeviceSynchronize();
+  for (int i = 0; i < 2; i++) {
+    cudaMalloc(reinterpret_cast<void **>(&mat_fp8[i].d_values),
+               sizeof(u32) * nnzs[i]);
+    cudaMalloc(reinterpret_cast<void **>(&mat_fp8[i].d_columns),
+               sizeof(u64) * nnzs[i]);
+  }
+  cudaDeviceSynchronize();
+  for (int i = 0; i < 2; i++) {
+    convert_to_fp8<<<1, 1>>>(mat_fp8[i].rows, mat_fp16[i].d_row_offsets,
+                             mat_fp16[i].d_col_vals,
+                             mat_fp8[i].d_values_row_offsets,
+                             mat_fp8[i].d_columns, mat_fp8[i].d_values);
+  }
+  cudaDeviceSynchronize();
+}
+
+int doublesparse_matmul(int m, int n, int k, u32 *a_row_offsets,
+                        u32 *a_col_vals, u32 *b_row_offsets, u32 *b_col_vals,
                         int non_zero_rows, int batch_size,
                         // 16-bit
                         // Input
@@ -562,30 +863,58 @@ int doublesparse_matmul(int m, int n, int k, void *a_row_offsets,
 
   constexpr u32 WARP_COUNT = 16;
   constexpr u32 THREAD_COUNT = WARP_SIZE * WARP_COUNT;
+  constexpr u32 NUM_RUNS = 2000;
+  constexpr u32 WARMUPS = 500;
 
   float *d_workspace = static_cast<float *>(d_workspace_ptr);
 
   Timer *timer{};
+
+  FP16MatrixCSR mat16[2] = {FP16MatrixCSR{.rows = m,
+                                          .d_row_offsets = a_row_offsets,
+                                          .d_col_vals = a_col_vals},
+                            FP16MatrixCSR{.rows = non_zero_rows,
+                                          .d_row_offsets = b_row_offsets,
+                                          .d_col_vals = b_col_vals}};
+  FP8MatrixCSR mat8[2] = {FP8MatrixCSR{.rows = m},
+                          FP8MatrixCSR{.rows = non_zero_rows}};
+  if (features.flags.is_fp8) {
+    for (int i = 0; i < 2; i++)
+      mat8[i].allocate();
+    convert_sync(mat16, mat8);
+  }
+
+  auto KERNEL_CALL = [&]() {
+    if (features.flags.is_fp8) {
+      KERNEL_CALL_FP8
+    } else {
+      KERNEL_CALL_FP16
+    }
+  };
+
   if (measurements) {
-    constexpr u32 NUM_RUNS = 500;
-    constexpr u32 WARMUPS = 100;
     for (int i = 0; i < WARMUPS; i++) {
-      KERNEL_CALL;
+      KERNEL_CALL();
     }
     timer = new Timer(stream);
     timer->start();
 
     for (int i = 0; i < NUM_RUNS; i++) {
-      KERNEL_CALL;
+      KERNEL_CALL();
     }
 
     static_cast<float *>(measurements)[0] = timer->end_and_measure() / NUM_RUNS;
     delete timer;
   } else {
-    KERNEL_CALL;
+    KERNEL_CALL();
     if (!features.flags.is_async) {
       CHECK_CUDA(cudaDeviceSynchronize());
     }
+  }
+
+  if (features.flags.is_fp8) {
+    for (int i = 0; i < 2; i++)
+      mat8[i].free();
   }
 
   return 0;
