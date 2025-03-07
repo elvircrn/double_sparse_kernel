@@ -238,13 +238,11 @@ DEVICE_INLINE __half_raw cvt_fp8_to_halfraw(const __nv_fp8_storage_t x) {
   res.x = 0U;
   unsigned short int ur = x;
   ur = (unsigned short int)(ur << 8U);
-
   unsigned short int sign = ur & 0x8000U;
   unsigned short int exponent =
       (unsigned short int)(((ur & 0x7800U) >> 1U) + 0x2000U);
   unsigned short int mantissa = (ur & 0x0700U) >> 1U;
   unsigned char absx = 0x7FU & (unsigned char)x;
-
   if (absx == 0x7FU) // NaN
   {
     ur = 0x7FFFU; // fp16 canonical NaN, discard sign
@@ -273,17 +271,18 @@ DEVICE_INLINE __half_raw cvt_fp8_to_halfraw(const __nv_fp8_storage_t x) {
 
 DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed) {
   Vec<float, 4> res;
-  res.d[0] = __half2float(
-      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  float2 *f2 = reinterpret_cast<float2 *>(&res.d);
+  half h0 = cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu));
   src_packed >>= 8u;
-  res.d[1] = __half2float(
-      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  half h1 = cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu));
   src_packed >>= 8u;
-  res.d[2] = __half2float(
-      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  half h2 = cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu));
   src_packed >>= 8u;
-  res.d[3] = __half2float(
-      cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu)));
+  half h3 = cvt_fp8_to_halfraw((__nv_fp8_storage_t)(src_packed & 0xFFu));
+
+  f2[0] = __half22float2(make_half2(h0, h1));
+  f2[1] = __half22float2(make_half2(h2, h3));
+
   return res;
 }
 
