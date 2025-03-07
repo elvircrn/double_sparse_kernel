@@ -401,13 +401,6 @@ __global__ void doublesparse_fp8(
     auto row_ptr = row_start + lane_id;
 
 
-    if (row_end - row_start > 256) {
-
-    }
-
-
-
-
     for (; row_ptr < row_end; row_ptr += WARP_SIZE) {
       auto val4 = to_float_x4(values[row_ptr], lut);
       auto col4 =
