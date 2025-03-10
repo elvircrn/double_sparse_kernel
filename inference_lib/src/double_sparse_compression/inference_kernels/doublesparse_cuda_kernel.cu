@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <torch/torch.h>
+
 #include "common.cuh"
 
 #include <cuda_fp16.h>
@@ -132,7 +134,8 @@ union Features {
     uint32_t is_split : 1;
     uint32_t is_naive : 1;
     uint32_t is_fp8 : 1;
-    uint32_t rest : 27;
+    uint32_t is_torch_sparse : 1;
+    uint32_t rest : 26;
   } flags;
 };
 
@@ -286,20 +289,15 @@ DEVICE_INLINE Vec<float, 4> _to_float_x4(uint32_t src_packed) {
   return res;
 }
 
-DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed, const half *lut) {
+DEVICE_INLINE Vec<float, 4> to_float_x4(uint32_t src_packed, const float *lut) {
   Vec<float, 4> res;
-  float2 *f2 = reinterpret_cast<float2 *>(&res.d);
-  half h0 = lut[src_packed & 0xFFu];
+  res.d[0] = lut[src_packed & 0xFFu];
   src_packed >>= 8u;
-  half h1 = lut[src_packed & 0xFFu];
+  res.d[1] = lut[src_packed & 0xFFu];
   src_packed >>= 8u;
-  half h2 = lut[src_packed & 0xFFu];
+  res.d[2] = lut[src_packed & 0xFFu];
   src_packed >>= 8u;
-  half h3 = lut[src_packed & 0xFFu];
-
-  f2[0] = __half22float2(make_half2(h0, h1));
-  f2[1] = __half22float2(make_half2(h2, h3));
-
+  res.d[3] = lut[src_packed & 0xFFu];
   return res;
 }
 
@@ -317,9 +315,9 @@ __global__ void doublesparse_fp8(
     float *__restrict__ _workspace, u32 smem_size_fp32) {
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[WARP_COUNT + 1];
-  __shared__ half s_lut_fp8[1 << 8];
+  __shared__ float s_lut_fp8[1 << 8];
   for (int i = threadIdx.x; i < 256; i += WARP_COUNT * WARP_SIZE) {
-    s_lut_fp8[i] = cvt_fp8_to_halfraw(i);
+    s_lut_fp8[i] = __half2float(cvt_fp8_to_halfraw(i));
   }
 
   half *y = _y + blockIdx.y * m;
@@ -887,6 +885,73 @@ struct FP8MatrixCSR {
   }
 };
 
+struct TorchCSR {
+  int rows;
+  int *d_row_offsets;
+  int *d_columns;
+  float *d_values;
+  int nnz;
+
+  void allocate_offsets() {
+    cudaMalloc(reinterpret_cast<void **>(&d_row_offsets),
+               (rows + 1) * sizeof(int));
+  }
+
+  void allocate_nnz(int nnz) {
+    this->nnz = nnz;
+    cudaMalloc(reinterpret_cast<void **>(&d_columns), nnz * sizeof(int));
+    cudaMalloc(reinterpret_cast<void **>(&d_values), nnz * sizeof(int));
+  }
+
+  void free() {
+    cudaFree(d_row_offsets);
+    cudaFree(d_columns);
+    cudaFree(d_values);
+  }
+};
+
+__global__ void convert_to_torch( // Inputs
+                                  // FP16
+    int fp16_rows, u32 *d_fp16_row_offsets, u32 *d_fp16_col_vals,
+    int torch_csr_rows, int *d_torch_csr_row_offsets, int *d_torch_csr_columns,
+    float *d_torch_csr_values, int torch_csr_nnz) {
+  if (!threadIdx.x) {
+    int i;
+    for (i = 0; i <= fp16_rows; i++) {
+      d_torch_csr_row_offsets[i] = d_fp16_row_offsets[i];
+    }
+    for (; i <= torch_csr_rows; i++) {
+      d_torch_csr_row_offsets[i] = d_fp16_row_offsets[fp16_rows];
+    }
+  }
+
+  int nnz = d_fp16_row_offsets[fp16_rows];
+  for (int i = threadIdx.x; i < nnz; i += blockDim.x) {
+    ColVal col_val = *reinterpret_cast<const ColVal *>(d_fp16_col_vals);
+    d_torch_csr_columns[i] = col_val.members.c;
+    d_torch_csr_values[i] = __half2float(col_val.members.v);
+  }
+}
+
+void convert_sync(FP16MatrixCSR mat_fp16[2], TorchCSR mat_torch_csr[2]) {
+  u32 nnzs[2];
+  for (int i = 0; i < 2; i++) {
+    mat_torch_csr[i].allocate_offsets();
+    cudaMemcpy(nnzs + i, mat_fp16[i].d_row_offsets + mat_fp16[i].rows,
+               sizeof(u32), cudaMemcpyDeviceToHost);
+  }
+  cudaDeviceSynchronize();
+
+  for (int i = 0; i < 2; i++) {
+    mat_torch_csr[i].allocate_nnz(nnzs[i]);
+    convert_to_torch<<<1, 256>>>(
+        mat_fp16[i].rows, mat_fp16[i].d_row_offsets, mat_fp16[i].d_col_vals,
+        mat_torch_csr[i].rows, mat_torch_csr[i].d_row_offsets,
+        mat_torch_csr[i].d_columns, mat_torch_csr[i].d_values,
+        mat_torch_csr[i].nnz);
+  }
+}
+
 void convert_sync(FP16MatrixCSR mat_fp16[2], FP8MatrixCSR mat_fp8[2]) {
   for (int i = 0; i < 2; i++) {
     fill_offsets_fp8<<<1, 1>>>(mat_fp8[i].rows, mat_fp16[i].d_row_offsets,
@@ -913,6 +978,14 @@ void convert_sync(FP16MatrixCSR mat_fp16[2], FP8MatrixCSR mat_fp8[2]) {
         mat_fp8[i].d_values);
   }
   cudaDeviceSynchronize();
+}
+
+template <class T>
+torch::Tensor tensor_from_cuda_ptr(T *d_ptr, int64_t size,
+                                   torch::ScalarType dtype) {
+  // Create a tensor from the raw CUDA pointer.
+  auto options = torch::TensorOptions().device(torch::kCUDA).dtype(dtype);
+  return torch::from_blob(d_ptr, {size}, options);
 }
 
 int doublesparse_matmul(int m, int n, int k, u32 *a_row_offsets,
@@ -943,15 +1016,53 @@ int doublesparse_matmul(int m, int n, int k, u32 *a_row_offsets,
                                           .d_col_vals = b_col_vals}};
   FP8MatrixCSR mat8[2] = {FP8MatrixCSR{.rows = m},
                           FP8MatrixCSR{.rows = non_zero_rows}};
+
+  TorchCSR mat_torch[2] = {TorchCSR{.rows = m}, TorchCSR{.rows = k}};
+  std::vector<torch::Tensor> torch_csr_tensors(2);
+  torch::Tensor dense_inputs[2];
+  torch::Tensor dense_outputs[2];
   if (features.flags.is_fp8) {
     for (int i = 0; i < 2; i++)
       mat8[i].allocate();
     convert_sync(mat16, mat8);
+  } else if (features.flags.is_torch_sparse) {
+    convert_sync(mat16, mat_torch);
+    for (int i = 0; i < 2; i++) {
+      torch::Tensor crow_indices = tensor_from_cuda_ptr(
+          mat_torch[i].d_row_offsets, mat_torch[i].rows + 1, torch::kInt32);
+      torch::Tensor col_indices = tensor_from_cuda_ptr(
+          mat_torch[i].d_columns, mat_torch[i].nnz, torch::kInt32);
+      torch::Tensor values = tensor_from_cuda_ptr(
+          mat_torch[i].d_values, mat_torch[i].nnz, torch::kFloat);
+      torch_csr_tensors[i] = torch::sparse_csr_tensor(
+          crow_indices, col_indices, values,
+          ((i == 0) ? torch::IntArrayRef{m, k} : torch::IntArrayRef{k, n}),
+          torch::TensorOptions().device(torch::kCUDA));
+    }
+    dense_inputs[0] = torch::rand(
+        {k, 1},
+        torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA)).contiguous();
+    dense_inputs[1] = torch::rand(
+        {n, 1},
+        torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA)).contiguous();
+
+    dense_outputs[0] = torch::rand(
+        {m, 1},
+        torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA)).contiguous();
+    dense_outputs[1] = torch::rand(
+        {k, 1},
+        torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA)).contiguous();
   }
 
   auto KERNEL_CALL = [&]() {
     if (features.flags.is_fp8) {
       KERNEL_CALL_FP8
+    } else if (features.flags.is_torch_sparse) {
+      matmul_out(dense_outputs[1], torch_csr_tensors[1],
+                        dense_inputs[1]);
+      cudaDeviceSynchronize();
+      matmul_out(dense_outputs[0], torch_csr_tensors[0],
+                        dense_inputs[0]);
     } else {
       KERNEL_CALL_FP16
     }
@@ -980,6 +1091,9 @@ int doublesparse_matmul(int m, int n, int k, u32 *a_row_offsets,
   if (features.flags.is_fp8) {
     for (int i = 0; i < 2; i++)
       mat8[i].free();
+  } else if (features.flags.is_torch_sparse) {
+    for (int i = 0; i < 2; i++)
+      mat_torch[i].free();
   }
 
   return 0;

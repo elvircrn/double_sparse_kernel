@@ -1,3 +1,4 @@
 baseline_fp16_csr 0.233463
 baseline_fp16_csr 0.239698
 baseline_fp16_csr 0.0612318
+baseline_fp8_csr 6.56698

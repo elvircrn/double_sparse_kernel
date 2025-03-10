@@ -32,6 +32,7 @@ ASYNC = 1 << 0
 IS_CSC = 1 << 1
 IS_NAIVE = 1 << 3
 IS_FP8 = 1 << 4
+IS_TORCH_SPARSE = 1 << 5
 
 
 class FeatureFlags(IntEnum):
@@ -42,6 +43,8 @@ class FeatureFlags(IntEnum):
     CSR_NAIVE_ASYNC = CSR | IS_NAIVE | ASYNC
     CSR_FP8 = CSR | IS_FP8
     CSR_FP8_ASYNC = CSR | IS_FP8 | ASYNC
+    CSR_TORCH_SPARSE = CSR | IS_TORCH_SPARSE
+    CSR_TORCH_SPARSE_ASYNC = CSR | IS_TORCH_SPARSE | ASYNC
 
     def pretty(self):
         if self.value == self.CSR:

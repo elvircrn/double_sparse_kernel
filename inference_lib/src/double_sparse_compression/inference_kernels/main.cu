@@ -99,41 +99,46 @@ SparsifiedLinear from_path(const std::string &base_path) {
       .d_b_col_vals = device_from_file<u32>(base_path + "b_col_vals.bin")};
 }
 
-int main() {
-  std::string tag = "baseline_fp8_csr";
-  Features features{._ = 0u};
-  features.flags.is_async = false;
-  features.flags.is_fp8 = true;
+struct Experiment {
+  Features features;
+  std::string tag;
+  bool full;
+};
 
+int run_experiment(Experiment experiment) {
   std::ofstream results("results.txt", std::ios_base::app);
   static constexpr int XY_SIZE = 11008 * 4;
   static constexpr int NUM_REPS = 512;
-  int num_layers = 20;
+  int num_layers = 30;
   auto d_x = device_from_size<uint16_t>(XY_SIZE);
   auto d_y = device_from_size<uint16_t>(XY_SIZE);
-  const std::vector<std::string> &layer_names{
+
+  const std::vector<std::string> &all_layer_names{
       "mlp.down_proj",    "mlp.gate_proj",    "mlp.up_proj",
       "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
       "self_attn.v_proj"};
 
-  const std::vector<std::string> &_layer_names{
-    "self_attn.k_proj"};
+  const std::vector<std::string> &small_layer_names{
+      "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
+      "self_attn.v_proj"};
+
+  auto layer_names = experiment.full ? all_layer_names : small_layer_names;
 
   auto measurements = new float[NUM_REPS];
 
   float mean_runtime = 0.f;
   int tests{};
 
-
   for (int i = 0; i < num_layers; i++) {
     for (const auto &layer_name : layer_names) {
       std::string quant_linear_path =
-          "/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/double_sparse_data/compressed_csr/bin/experiment0.70/" +
+          "/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/"
+          "double_sparse_data/compressed_csr/bin/experiment0.70/" +
           std::to_string(i) + "/" + layer_name + "/";
 
       SparsifiedLinear sparsified_linear = from_path(quant_linear_path);
-      auto result =
-          mul_with_time(sparsified_linear, d_x, d_y, measurements, 1, features);
+      auto result = mul_with_time(sparsified_linear, d_x, d_y, measurements, 1,
+                                  experiment.features);
 
       mean_runtime += result.min;
 
@@ -146,10 +151,32 @@ int main() {
     }
   }
 
-  results << std::left << std::setw(16) << tag << " " << (mean_runtime / tests)
-          << std::endl;
+  results << std::left << std::setw(16) << experiment.tag << " "
+          << (mean_runtime / tests) << std::endl;
 
   delete[] measurements;
 
+  return 0;
+}
+
+int main() {
+  std::string tag = "baseline_fp8_csr";
+  Features features_fp8{._ = 0u};
+  features_fp8.flags.is_fp8 = true;
+  Features features_torch_sparse{._ = 0u};
+  features_torch_sparse.flags.is_torch_sparse = true;
+  Features features_fp16{._ = 0u};
+
+  bool full = true;
+  std::vector<Experiment> experiments{
+      Experiment{
+          .features = features_torch_sparse, .tag = "sparse", .full = full},
+      Experiment{.features = features_fp8, .tag = "fp8", .full = full},
+      Experiment{.features = features_fp16, .tag = "fp16", .full = full}
+      };
+
+  for (const auto &experiment : experiments) {
+    run_experiment(experiment);
+  }
   return 0;
 }
