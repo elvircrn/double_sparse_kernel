@@ -164,13 +164,15 @@ int main() {
   std::ofstream results("results.txt", std::ios_base::app);
   static constexpr int XY_SIZE = 11008 * 4;
   static constexpr int NUM_REPS = 512;
-  int num_layers = 20;
+  int num_layers = 1;
   auto d_x = device_from_size<uint16_t>(XY_SIZE);
   auto d_y = device_from_size<uint16_t>(XY_SIZE);
   const std::vector<std::string> &layer_names{
-      "mlp.down_proj",    "mlp.gate_proj",    "mlp.up_proj",
-      "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
-      "self_attn.v_proj"};
+    "mlp.down_proj"};
+  // const std::vector<std::string> &layer_names{
+  //     "mlp.down_proj",    "mlp.gate_proj",    "mlp.up_proj",
+  //     "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
+  //     "self_attn.v_proj"};
 
   auto measurements = new float[NUM_REPS];
 

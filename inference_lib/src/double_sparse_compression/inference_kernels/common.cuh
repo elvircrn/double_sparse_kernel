@@ -106,7 +106,7 @@ union SecondOrder {
     }                                                                          \
   }
 
-struct Timer {
+struct MyTimer {
   cudaEvent_t ce_start{}, ce_stop{};
   cudaStream_t stream;
 
@@ -121,16 +121,16 @@ struct Timer {
     return time_ms;
   }
 
-  inline Timer(cudaStream_t stream) : stream(stream) {
+  inline MyTimer(cudaStream_t stream) : stream(stream) {
     cudaEventCreate(&ce_start);
     cudaEventCreate(&ce_stop);
   }
 
-  inline Timer(Timer &&timer) = delete;
+  inline MyTimer(MyTimer &&timer) = delete;
 
-  inline Timer(const Timer &timer) = delete;
+  inline MyTimer(const MyTimer &timer) = delete;
 
-  inline ~Timer() {
+  inline ~MyTimer() {
     cudaEventDestroy(ce_start);
     cudaEventDestroy(ce_stop);
   }

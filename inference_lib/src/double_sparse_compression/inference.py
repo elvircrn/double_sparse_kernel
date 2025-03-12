@@ -33,6 +33,7 @@ IS_CSC = 1 << 1
 IS_NAIVE = 1 << 3
 IS_FP8 = 1 << 4
 IS_TORCH_SPARSE = 1 << 5
+IS_SPUTNIK = 1 << 6
 
 
 class FeatureFlags(IntEnum):

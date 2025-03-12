@@ -6,7 +6,6 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
-#include <thread>
 #include <vector>
 
 struct SparsifiedLinear {
@@ -109,7 +108,7 @@ int run_experiment(Experiment experiment) {
   std::ofstream results("results.txt", std::ios_base::app);
   static constexpr int XY_SIZE = 11008 * 4;
   static constexpr int NUM_REPS = 512;
-  int num_layers = 30;
+  int num_layers = 20;
   auto d_x = device_from_size<uint16_t>(XY_SIZE);
   auto d_y = device_from_size<uint16_t>(XY_SIZE);
 
@@ -129,8 +128,8 @@ int run_experiment(Experiment experiment) {
   float mean_runtime = 0.f;
   int tests{};
 
-  for (int i = 0; i < num_layers; i++) {
-    for (const auto &layer_name : layer_names) {
+  for (int i = 0; i < 4; i++) {
+    for (const auto &layer_name : all_layer_names) {
       std::string quant_linear_path =
           "/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/"
           "double_sparse_data/compressed_csr/bin/experiment0.70/" +
@@ -166,14 +165,25 @@ int main() {
   Features features_torch_sparse{._ = 0u};
   features_torch_sparse.flags.is_torch_sparse = true;
   Features features_fp16{._ = 0u};
+  Features features_sputnik{._ = 0u};
+  features_sputnik.flags.is_sputnik = true;
 
-  bool full = true;
+
+  bool full = false;
+
+#if 0
   std::vector<Experiment> experiments{
       Experiment{
           .features = features_torch_sparse, .tag = "sparse", .full = full},
       Experiment{.features = features_fp8, .tag = "fp8", .full = full},
       Experiment{.features = features_fp16, .tag = "fp16", .full = full}
       };
+#else
+  std::vector experiments{
+    Experiment{
+      .features = features_sputnik, .tag = "sputnik", .full = full}
+  };
+#endif
 
   for (const auto &experiment : experiments) {
     run_experiment(experiment);
