@@ -679,6 +679,13 @@ cudaError_t CudaSpmm(int m, int k, int n, int nonzeros,
                      const float* __restrict__ dense_matrix,
                      float* __restrict__ output_matrix,
                      cudaStream_t stream);
+cudaError_t CudaSpmm(int m, int k, int n, int nonzeros,
+                     const int *__restrict__ row_indices,
+                     const half2 *__restrict__ values,
+                     const int *__restrict__ row_offsets,
+                     const short2 *__restrict__ column_indices,
+                     const half2 *__restrict__ dense_matrix,
+                     half2 *__restrict__ output_matrix, cudaStream_t stream);
 }
 
 
@@ -908,8 +915,8 @@ struct SputnikCSR {
   int rows;
   int cols;
   int *d_row_offsets = nullptr;
-  int *d_columns = nullptr;
-  float *d_values = nullptr;
+  short *d_columns = nullptr;
+  half *d_values = nullptr;
   int nnz;
   int *d_row_indices;
 
@@ -921,8 +928,8 @@ struct SputnikCSR {
 
   void allocate_nnz(int nnz) {
     this->nnz = nnz;
-    cudaMalloc(reinterpret_cast<void **>(&d_columns), nnz * sizeof(int));
-    cudaMalloc(reinterpret_cast<void **>(&d_values), nnz * sizeof(float));
+    cudaMalloc(reinterpret_cast<void **>(&d_columns), nnz * sizeof(short));
+    cudaMalloc(reinterpret_cast<void **>(&d_values), nnz * sizeof(half));
   }
 
   void free() {
@@ -985,7 +992,7 @@ __global__ void convert_to_sputnik( // Inputs
                                     // FP16
     int nonzero_row_count, u32 *d_fp16_row_offsets, u32 *d_fp16_col_vals,
     int *d_torch_csr_row_offsets,
-    int *d_torch_csr_columns, float *d_torch_csr_values, int full_row_count,
+    short *d_torch_csr_columns, half *d_torch_csr_values, int full_row_count,
     int *row_indices) {
   if (!threadIdx.x) {
     int i;
@@ -1001,7 +1008,7 @@ __global__ void convert_to_sputnik( // Inputs
   for (int i = threadIdx.x; i < nnz; i += blockDim.x) {
     ColVal col_val = *reinterpret_cast<const ColVal *>(d_fp16_col_vals);
     d_torch_csr_columns[i] = col_val.members.c;
-    d_torch_csr_values[i] = __half2float(col_val.members.v);
+    d_torch_csr_values[i] = col_val.members.v;
   }
 
   for (int i = threadIdx.x; i < full_row_count; i += blockDim.x) {
@@ -1120,8 +1127,8 @@ int doublesparse_matmul(int m, int n, int k, u32 *a_row_offsets,
   torch::Tensor dense_outputs[2];
 #endif
 
-  float *dense_sputnik_inputs[2];
-  float *dense_sputnik_outputs[2];
+  half *dense_sputnik_inputs[2];
+  half *dense_sputnik_outputs[2];
 
   if (features.flags.is_fp8) {
     for (int i = 0; i < 2; i++) {
@@ -1168,14 +1175,14 @@ int doublesparse_matmul(int m, int n, int k, u32 *a_row_offsets,
   } else if (features.flags.is_sputnik) {
     convert_sync(mat16, mat_sputnik);
     cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_inputs[1]),
-               n * batch_size * sizeof(float));
+               n * batch_size * sizeof(half));
     cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_inputs[0]),
-               k * batch_size * sizeof(float));
+               k * batch_size * sizeof(half));
 
     cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_outputs[1]),
-               k * batch_size * sizeof(float));
+               k * batch_size * sizeof(half));
     cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_outputs[0]),
-               m * batch_size * sizeof(float));
+               m * batch_size * sizeof(half));
     cudaDeviceSynchronize();
   }
 
@@ -1189,15 +1196,14 @@ int doublesparse_matmul(int m, int n, int k, u32 *a_row_offsets,
       matmul_out(dense_outputs[0], torch_csr_tensors[0], dense_inputs[0]);
 #endif
     } else if (features.flags.is_sputnik) {
-
       for (int i = 1; i >= 0; i--) {
         sputnik::CudaSpmm(
-            (i == 1) ? k : m, (i == 1 ? n : k), batch_size, mat_sputnik[i].nnz,
+            (i == 1) ? k : m, (i == 1 ? n : k), std::max(batch_size, 2), mat_sputnik[i].nnz,
             mat_sputnik[i].d_row_indices,
-            mat_sputnik[i].d_values,
+            reinterpret_cast<half2*>(mat_sputnik[i].d_values),
             mat_sputnik[i].d_row_offsets,
-            mat_sputnik[i].d_columns,
-            dense_sputnik_inputs[i], dense_sputnik_outputs[i], stream);
+            reinterpret_cast<short2*>(mat_sputnik[i].d_columns),
+            reinterpret_cast<half2*>(dense_sputnik_inputs[i]), reinterpret_cast<half2*>(dense_sputnik_outputs[i]), stream);
         if (i) {
           cudaDeviceSynchronize();
         }
