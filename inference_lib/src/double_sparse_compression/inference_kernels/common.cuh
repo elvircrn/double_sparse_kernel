@@ -75,7 +75,7 @@ template<class Bit_t> struct _BitArray {
 };
 
 union ColVal {
-  u32 _;
+  int _;
 
   struct {
     unsigned short c;

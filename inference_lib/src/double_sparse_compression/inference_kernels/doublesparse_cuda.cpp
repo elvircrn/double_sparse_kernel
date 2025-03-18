@@ -67,6 +67,25 @@ int doublesparse_matmul(
     cudaStream_t stream = nullptr,
     void *measurements = nullptr,
     u32 feature_flag = 0);
+int doublesparse_matmul_fp8(
+    // W and meta
+    int m, int n, int k,
+    int *a_row_offsets,
+    int *a_col_ids,
+    int *b_row_offsets,
+    int *b_col_ids,
+    int non_zero_rows,
+    int batch_size,
+    // 16-bit
+    // Input
+    void *X,
+    // Output
+    void *y,
+    void *d_workspace,
+    // GPU meta
+    cudaStream_t stream = nullptr,
+    void *measurements = nullptr,
+    u32 feature_flag = 0);
 };
 
 void doublesparse_mul(
@@ -109,7 +128,15 @@ void doublesparse_mul_timer(
     u32 feature_flag, const torch::Tensor &workspace) {
   int dev = a_row_offsets.get_device();
   Features features{._ = feature_flag};
-  if (!features.flags.is_fp8 && !features.flags.is_sputnik &&
+  if (features.flags.is_fp8) {
+      int err = doublesparse::doublesparse_matmul_fp8(
+            m, n, k, a_row_offsets.data_ptr<int>(),
+            a_col_val.data_ptr<int>(), b_row_offsets.data_ptr<int>(),
+            b_col_val.data_ptr<int>(), non_zero_rows, batch_size,
+            X.data_ptr(), Y.data_ptr(), workspace.data_ptr(),
+            at::cuda::getCurrentCUDAStream(dev), measurements.data_ptr(),
+            feature_flag);
+  } else if (!features.flags.is_sputnik &&
       !features.flags.is_torch_sparse) {
     int err = doublesparse::doublesparse_matmul(
         m, n, k, (u32 *)a_row_offsets.data_ptr<int>(),

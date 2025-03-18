@@ -113,7 +113,7 @@ class TestSparseFp8(unittest.TestCase):
                             x = create_x_random(n * batch_size).cuda(device=device).half()
                             ds = random_doublesparse(m, n, k, density)
                             sparsified_linear = SparsifiedLinear.from_legacy(ds, device)
-                            y = sparsified_linear.forward(x.reshape((n, batch_size)).contiguous(), FeatureFlags.CSR_FP8).squeeze()
+                            y = sparsified_linear.forward(x.reshape((n, batch_size)).contiguous(), FeatureFlags.CSR).squeeze()
                             dense_mat = to_dense(ds)
                             x_reshaped = x.reshape((batch_size, n)).T.contiguous()
                             y_matmul = (dense_mat.float() @ x_reshaped.float()).T.half().squeeze()

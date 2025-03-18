@@ -101,7 +101,7 @@ def run():
         csr_folders.sort()
 
         methods = [
-            FeatureFlags.CSR,
+            FeatureFlags.CSR_FP8,
         ]
 
         f.write("Layer;Tensor Name;M;N;K;Dense (FP16)")

@@ -16,8 +16,6 @@
 
 // Torch takes too damn long to compile!
 
-#include <torch/torch.h>
-
 #include "common.cuh"
 
 #include <cuda_fp16.h>
@@ -25,19 +23,13 @@
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
 
-static __device__ __host__ __forceinline__ int updiv(int x, int y) { return (x + y - 1) / y; }
-
-
-static constexpr u32 SHARED_OFFSET = 32;
-static constexpr u32 WARP_SIZE = 32;
-static constexpr u32 FULL_MASK = 0xFFFFFFFFu;
-
-__device__ void printf_half2(const half2 &_x) {
-  auto x = __half22float2(_x);
-  printf("%f %f\n", x.x, x.y);
+static __device__ __host__ __forceinline__ int updiv(int x, int y) {
+  return (x + y - 1) / y;
 }
 
-__device__ void printf_float2(float2 x) { printf("%f %f\n", x.x, x.y); }
+static constexpr int SHARED_OFFSET = 32;
+static constexpr int WARP_SIZE = 32;
+static constexpr int FULL_MASK = 0xFFFFFFFFu;
 
 #define DEVICE_INLINE __forceinline__ __device__
 
@@ -83,7 +75,7 @@ template <class T> DEVICE_INLINE u16 get_col(T m) {
   return static_cast<u16>(m & T((1u << 16u) - 1u));
 }
 
-DEVICE_INLINE half get_val(u32 m) {
+DEVICE_INLINE half get_val(int m) {
   u16 _v = m >> 16u;
   half v = *reinterpret_cast<half *>(&_v);
   return v;
@@ -96,7 +88,7 @@ template <int n> DEVICE_INLINE void cp_async_wait() {
 
 DEVICE_INLINE void cp_async(half2 *__restrict__ dst,
                             const half2 *__restrict__ src) {
-  u32 s_dst = u32(__cvta_generic_to_shared(dst));
+  int s_dst = int(__cvta_generic_to_shared(dst));
   asm volatile("cp.async.ca.shared.global [%0], [%1], 4;\n" ::"r"(s_dst),
                "l"(src));
 }
@@ -105,7 +97,7 @@ using Load_t = __int128_t;
 
 DEVICE_INLINE void cp_async128(Load_t *__restrict__ dst,
                                const Load_t *__restrict__ src) {
-  u32 s_dst = u32(__cvta_generic_to_shared(dst));
+  int s_dst = int(__cvta_generic_to_shared(dst));
   asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" ::"r"(s_dst),
                "l"(src));
 }
@@ -115,7 +107,7 @@ DEVICE_INLINE void cp_async_wait_all() { asm volatile("cp.async.wait_all;\n"); }
 __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
   uint32_t v;
   asm volatile("{\n"
-               "   ld.global.ca.u32 %0, [%1];\n"
+               "   ld.global.ca.int %0, [%1];\n"
                "}\n"
                : "=r"(v)
                : "l"(ptr));
@@ -150,15 +142,15 @@ template <class T> DEVICE_INLINE T reduce_final(T val) {
 
 template <int PHASE, int WARP_COUNT>
 __global__ void
-doublesparse_naive(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
+doublesparse_naive(int m, int n, int k, const int *__restrict__ a_row_offsets,
                    const ColVal *__restrict__ a_col_vals,
-                   const u32 *__restrict__ b_row_offsets,
+                   const int *__restrict__ b_row_offsets,
                    const ColVal *__restrict__ b_col_vals, int non_zero_rows,
                    int batch_size, const half *__restrict__ _x, half *_y,
-                   float *__restrict__ _workspace, u32 smem_size_fp32,
+                   float *__restrict__ _workspace, int smem_size_fp32,
                    int global_row_offset = 0) {
   extern __shared__ half2 s_x2[];
-  __shared__ u32 s_row_offsets[WARP_COUNT + 1];
+  __shared__ int s_row_offsets[WARP_COUNT + 1];
 
   const half *x = _x + blockIdx.y * n;
   half *y = _y + blockIdx.y * m;
@@ -307,23 +299,23 @@ template <int PHASE, int WARP_COUNT>
 __global__ void doublesparse_fp8(
     int m, int n, int k,
 
-    const u32 *__restrict__ a_row_offsets, const u64 *__restrict__ a_columns,
-    const u32 *__restrict__ a_values,
+    const int *__restrict__ a_row_offsets, const u64 *__restrict__ a_columns,
+    const int *__restrict__ a_values,
 
-    const u32 *__restrict__ b_row_offsets, const u64 *__restrict__ b_columns,
-    const u32 *__restrict__ b_values,
+    const int *__restrict__ b_row_offsets, const u64 *__restrict__ b_columns,
+    const int *__restrict__ b_values,
 
     int non_zero_rows, int batch_size, const half *__restrict__ x, half *_y,
-    float *__restrict__ _workspace, u32 smem_size_fp32) {
+    float *__restrict__ _workspace, int smem_size_fp32) {
   extern __shared__ half2 s_x2[];
-  __shared__ u32 s_row_offsets[WARP_COUNT + 1];
+  __shared__ int s_row_offsets[WARP_COUNT + 1];
   __shared__ float s_lut_fp8[1 << 8];
   for (int i = threadIdx.x; i < 256; i += WARP_COUNT * WARP_SIZE) {
     s_lut_fp8[i] = __half2float(cvt_fp8_to_halfraw(i));
   }
 
   half *y = _y + blockIdx.y * m;
-  u32 smem_size_fp16 = smem_size_fp32 * 2;
+  int smem_size_fp16 = smem_size_fp32 * 2;
   auto s_x = reinterpret_cast<half *>(s_x2);
 
   float *workspace = _workspace + blockIdx.y * k;
@@ -334,7 +326,7 @@ __global__ void doublesparse_fp8(
 
   auto row = blockIdx.x * WARP_COUNT + warp_id;
 
-  u32 available_warps{};
+  int available_warps{};
 
   if constexpr (!PHASE) {
     available_warps = min(WARP_COUNT, non_zero_rows - blockIdx.x * WARP_COUNT);
@@ -352,7 +344,7 @@ __global__ void doublesparse_fp8(
   int rows_to_load =
       min(WARP_COUNT, ((!PHASE ? non_zero_rows : m) - blockIdx.x * WARP_COUNT));
 
-  const u32 *row_offsets = !PHASE ? b_row_offsets : a_row_offsets;
+  const int *row_offsets = !PHASE ? b_row_offsets : a_row_offsets;
 
   if (threadIdx.x < WARP_COUNT &&
       row_to_load < (blockIdx.x * WARP_COUNT) + rows_to_load) {
@@ -374,7 +366,7 @@ __global__ void doublesparse_fp8(
                       : updiv(non_zero_rows, smem_size_fp32);
 
   const u64 *columns;
-  const u32 *values;
+  const int *values;
   if (!PHASE) {
     columns = b_columns;
     values = b_values;
@@ -383,7 +375,7 @@ __global__ void doublesparse_fp8(
     values = a_values;
   }
 
-  u32 avilable_threads = available_warps * WARP_SIZE;
+  int avilable_threads = available_warps * WARP_SIZE;
 
   if (pages == 1) {
     auto x2_to_load = !PHASE ? (n / 2) : non_zero_rows;
@@ -423,7 +415,7 @@ __global__ void doublesparse_fp8(
     auto row_ptr = row_start + lane_id;
 
     for (int page = 0; page < pages; page++) {
-      const u32 page_offset = page * smem_size_fp32;
+      const int page_offset = page * smem_size_fp32;
 
       __syncthreads();
 
@@ -444,7 +436,7 @@ __global__ void doublesparse_fp8(
 
       __syncthreads();
 
-      u32 upper_col_limit{}, lower_col_limit{};
+      int upper_col_limit{}, lower_col_limit{};
 
       if constexpr (!PHASE) {
         lower_col_limit = smem_size_fp16 * page;
@@ -495,121 +487,6 @@ __global__ void doublesparse_fp8(
   }
 }
 
-namespace sputnik {
-cudaError_t CudaSpmm(int m, int k, int n, int nonzeros,
-                     const int *__restrict__ row_indices,
-                     const float *__restrict__ values,
-                     const int *__restrict__ row_offsets,
-                     const int *__restrict__ column_indices,
-                     const float *__restrict__ dense_matrix,
-                     float *__restrict__ output_matrix, cudaStream_t stream);
-cudaError_t CudaSpmm(int m, int k, int n, int nonzeros,
-                     const int *__restrict__ row_indices,
-                     const half2 *__restrict__ values,
-                     const int *__restrict__ row_offsets,
-                     const short2 *__restrict__ column_indices,
-                     const half2 *__restrict__ dense_matrix,
-                     half2 *__restrict__ output_matrix, cudaStream_t stream);
-} // namespace sputnik
-
-template <int WARP_COUNT>
-__global__ void
-doublesparse_csc(int m, int n, int k, const u32 *__restrict__ a_row_offsets,
-                 const ColVal *__restrict__ a_col_vals,
-                 const u32 *__restrict__ b_row_offsets,
-                 const ColVal *__restrict__ b_col_vals, int non_zero_rows,
-                 int batch_size, const half *__restrict__ x, half *_y,
-                 float *__restrict__ _workspace, u32 smem_size_fp32) {
-  extern __shared__ half2 s_x2[];
-  __shared__ u32 s_row_offsets[WARP_COUNT + 1];
-
-  half *y = _y + blockIdx.y * m;
-  u32 smem_size_fp16 = smem_size_fp32 * 2;
-  auto s_x = reinterpret_cast<half *>(s_x2);
-
-  float *workspace = _workspace + blockIdx.y * k;
-  const half2 *x2 = reinterpret_cast<const half2 *>(x + blockIdx.y * n / 2);
-
-  const auto warp_id = threadIdx.x / WARP_SIZE;
-  auto lane_id = threadIdx.x & 0x1f;
-
-  auto row = blockIdx.x * WARP_COUNT + warp_id;
-
-  if (row >= non_zero_rows) {
-    return;
-  }
-
-  if (threadIdx.x < WARP_COUNT) {
-    s_row_offsets[threadIdx.x] = b_row_offsets[row + threadIdx.x];
-  }
-  if (threadIdx.x == WARP_COUNT) {
-    s_row_offsets[threadIdx.x] = b_row_offsets[row + threadIdx.x];
-  }
-
-  __syncthreads();
-  auto b_row_start = s_row_offsets[warp_id];
-  auto b_row_end = s_row_offsets[warp_id + 1];
-  auto b_row_ptr = b_row_start + lane_id;
-
-  float acc{};
-  // Pages of x strips.
-  auto pages = updiv(n / 2, smem_size_fp32);
-
-  const ColVal *col_vals = b_col_vals;
-
-  if (pages == 1) {
-    auto x2_to_load = n / 2;
-    for (int i = threadIdx.x; i < x2_to_load; i += blockDim.x) {
-      s_x2[i] = x2[i];
-    }
-
-    __syncthreads();
-
-    for (; b_row_ptr < b_row_end; b_row_ptr += WARP_SIZE) {
-      // We ran out of x.
-      ColVal col_val = col_vals[b_row_ptr];
-
-      auto local_c = col_val.members.c;
-      acc += __half2float(s_x[local_c]) * __half2float(col_val.members.v);
-    }
-  } else {
-    for (int page = 0; page < pages; page++) {
-      const u32 page_offset = page * smem_size_fp32;
-#ifndef SKIP_XLOAD
-      auto x2_to_load = n / 2 - page_offset;
-      const u32 x_limit = min(smem_size_fp32, x2_to_load);
-      for (int i = threadIdx.x; i < x_limit; i += blockDim.x) {
-        s_x2[i] = x2[i];
-      }
-#endif
-
-      __syncthreads();
-
-      u32 column_limit{};
-
-      column_limit = smem_size_fp16 * (page + 1);
-
-      for (; b_row_ptr < b_row_end; b_row_ptr += WARP_SIZE) {
-        // We ran out of x.
-        ColVal col_val = col_vals[b_row_ptr];
-
-        if (col_val.members.c >= column_limit) {
-          break;
-        }
-
-        auto local_c = col_val.members.c - page * smem_size_fp16;
-        acc += __half2float(s_x[local_c]) * __half2float(col_val.members.v);
-      }
-
-      __syncthreads();
-
-      x2 += smem_size_fp32;
-    }
-  }
-
-  acc = reduce_final(acc);
-}
-
 #define CALL_DOUBLE_MATMUL_FP8(P, SMEM_SIZE_FP32, K, given_stream)             \
   doublesparse_fp8<P, WARP_COUNT>                                              \
       <<<dim3(updiv((!P ? non_zero_rows : m), WARP_COUNT), batch_size, 1),     \
@@ -643,11 +520,11 @@ __global__ void fill_offsets_fp8(int non_zero_row_count, const int *row_offsets,
 __global__ void convert_to_fp8(
     // Inputs
     // FP16
-    u32 rows, const int *row_offsets, const int *col_vals,
+    int rows, const int *row_offsets, const int *col_vals,
     // FP8
     const int *row_offsets_value_aligned_fp8,
     // Outputs
-    u64 *columns_fp8, u32 *values_fp8) {
+    u64 *columns_fp8, int *values_fp8) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
   if (i >= rows) {
     return;
@@ -655,13 +532,13 @@ __global__ void convert_to_fp8(
   int colval_fp8_id{};
   for (int j = row_offsets[i]; j < row_offsets[i + 1];
        j += FP8_VALUES_CHUNK_SIZE) {
-    u32 vals_x4{};
+    int vals_x4{};
     u64 cols_x4{};
-    u32 colval_id{};
+    int colval_id{};
     ColVal col_val;
     for (int k = 0; k < FP8_VALUES_CHUNK_SIZE; k++) {
       if (j + k < row_offsets[i + 1]) {
-        col_val = ColVal{._ = (u32)col_vals[j + k]};
+        col_val = ColVal{._ = (int)col_vals[j + k]};
       } else {
         col_val.members.v = __int2half_rd(0);
       }
@@ -688,12 +565,12 @@ struct FP16MatrixCSR {
 struct FP8MatrixCSR {
   int rows;
   int *d_values_row_offsets;
-  u32 *d_values;
+  int *d_values;
   u64 *d_columns;
 
   void allocate() {
     cudaMalloc(reinterpret_cast<void **>(&d_values_row_offsets),
-               sizeof(u32) * (rows + 1));
+               sizeof(int) * (rows + 1));
   }
 
   void free() {
@@ -702,156 +579,6 @@ struct FP8MatrixCSR {
     cudaFree(d_columns);
   }
 };
-
-struct SputnikCSR {
-  int rows;
-  int cols;
-  int *d_row_offsets = nullptr;
-  short *d_columns = nullptr;
-  half *d_values = nullptr;
-  int nnz;
-  int *d_row_indices;
-
-  void allocate_offsets() {
-    cudaMalloc(reinterpret_cast<void **>(&d_row_offsets),
-               (rows + 1) * sizeof(int));
-    cudaMalloc(reinterpret_cast<void **>(&d_row_indices), rows * sizeof(int));
-  }
-
-  void allocate_nnz(int nnz) {
-    this->nnz = nnz;
-    cudaMalloc(reinterpret_cast<void **>(&d_columns), nnz * sizeof(short));
-    cudaMalloc(reinterpret_cast<void **>(&d_values), nnz * sizeof(half));
-  }
-
-  void free() {
-    cudaFree(d_row_offsets);
-    cudaFree(d_columns);
-    cudaFree(d_values);
-    cudaFree(d_row_indices);
-  }
-};
-
-struct TorchCSR {
-  int rows;
-  int *d_row_offsets;
-  int *d_columns;
-  float *d_values;
-  int nnz;
-
-  void allocate_offsets() {
-    cudaMalloc(reinterpret_cast<void **>(&d_row_offsets),
-               (rows + 1) * sizeof(int));
-  }
-
-  void allocate_nnz(int nnz) {
-    this->nnz = nnz;
-    cudaMalloc(reinterpret_cast<void **>(&d_columns), nnz * sizeof(int));
-    cudaMalloc(reinterpret_cast<void **>(&d_values), nnz * sizeof(int));
-  }
-
-  void free() {
-    cudaFree(d_row_offsets);
-    cudaFree(d_columns);
-    cudaFree(d_values);
-  }
-};
-
-__global__ void convert_to_torch( // Inputs
-                                  // FP16
-    int fp16_rows, int *d_fp16_row_offsets, int *d_fp16_col_vals,
-    int torch_csr_rows, int *d_torch_csr_row_offsets, int *d_torch_csr_columns,
-    float *d_torch_csr_values, int torch_csr_nnz) {
-  if (!threadIdx.x) {
-    int i;
-    for (i = 0; i <= fp16_rows; i++) {
-      d_torch_csr_row_offsets[i] = d_fp16_row_offsets[i];
-    }
-    for (; i <= torch_csr_rows; i++) {
-      d_torch_csr_row_offsets[i] = d_fp16_row_offsets[fp16_rows];
-    }
-  }
-
-  int nnz = d_fp16_row_offsets[fp16_rows];
-  for (int i = threadIdx.x; i < nnz; i += blockDim.x) {
-    ColVal col_val = *reinterpret_cast<const ColVal *>(d_fp16_col_vals);
-    d_torch_csr_columns[i] = col_val.members.c;
-    d_torch_csr_values[i] = __half2float(col_val.members.v);
-  }
-}
-
-__global__ void convert_to_sputnik( // Inputs
-                                    // FP16
-    int nonzero_row_count, int *d_fp16_row_offsets, int *d_fp16_col_vals,
-    int *d_torch_csr_row_offsets, short *d_torch_csr_columns,
-    half *d_torch_csr_values, int full_row_count, int *row_indices) {
-  if (!threadIdx.x) {
-    int i;
-    for (i = 0; i <= nonzero_row_count; i++) {
-      d_torch_csr_row_offsets[i] = d_fp16_row_offsets[i];
-    }
-    for (; i <= full_row_count; i++) {
-      d_torch_csr_row_offsets[i] = d_fp16_row_offsets[nonzero_row_count];
-    }
-  }
-
-  int nnz = d_fp16_row_offsets[nonzero_row_count];
-  for (int i = threadIdx.x; i < nnz; i += blockDim.x) {
-    ColVal col_val = *reinterpret_cast<const ColVal *>(d_fp16_col_vals);
-    d_torch_csr_columns[i] = col_val.members.c;
-    d_torch_csr_values[i] = col_val.members.v;
-  }
-
-  for (int i = threadIdx.x; i < full_row_count; i += blockDim.x) {
-    row_indices[i] = i;
-  }
-}
-
-void convert_sync(FP16MatrixCSR mat_fp16[2], SputnikCSR mat_sputnik_csr[2]) {
-  int nnzs[2]{0, 0};
-  for (int i = 0; i < 2; i++) {
-    mat_sputnik_csr[i].allocate_offsets();
-    cudaMemcpy(nnzs + i, mat_fp16[i].d_row_offsets + mat_fp16[i].rows,
-               sizeof(int), cudaMemcpyDeviceToHost);
-  }
-  cudaDeviceSynchronize();
-
-  for (int i = 0; i < 2; i++) {
-    mat_sputnik_csr[i].allocate_nnz(nnzs[i]);
-    convert_to_sputnik<<<1, 256>>>(
-        mat_fp16[i].rows, mat_fp16[i].d_row_offsets, mat_fp16[i].d_col_vals,
-        mat_sputnik_csr[i].d_row_offsets, mat_sputnik_csr[i].d_columns,
-        mat_sputnik_csr[i].d_values, mat_sputnik_csr[i].rows,
-        mat_sputnik_csr[i].d_row_indices);
-  }
-}
-
-template <class T>
-torch::Tensor tensor_from_cuda_ptr(T *d_ptr, int64_t size,
-                                   torch::ScalarType dtype) {
-  // Create a tensor from the raw CUDA pointer.
-  auto options = torch::TensorOptions().device(torch::kCUDA).dtype(dtype);
-  return torch::from_blob(d_ptr, {size}, options);
-}
-
-void convert_sync(FP16MatrixCSR mat_fp16[2], TorchCSR mat_torch_csr[2]) {
-  u32 nnzs[2];
-  for (int i = 0; i < 2; i++) {
-    mat_torch_csr[i].allocate_offsets();
-    cudaMemcpy(nnzs + i, mat_fp16[i].d_row_offsets + mat_fp16[i].rows,
-               sizeof(u32), cudaMemcpyDeviceToHost);
-  }
-  cudaDeviceSynchronize();
-
-  for (int i = 0; i < 2; i++) {
-    mat_torch_csr[i].allocate_nnz(nnzs[i]);
-    convert_to_torch<<<1, 256>>>(
-        mat_fp16[i].rows, mat_fp16[i].d_row_offsets, mat_fp16[i].d_col_vals,
-        mat_torch_csr[i].rows, mat_torch_csr[i].d_row_offsets,
-        mat_torch_csr[i].d_columns, mat_torch_csr[i].d_values,
-        mat_torch_csr[i].nnz);
-  }
-}
 
 void convert_sync(FP16MatrixCSR mat_fp16[2], FP8MatrixCSR mat_fp8[2]) {
   for (int i = 0; i < 2; i++) {
@@ -862,12 +589,12 @@ void convert_sync(FP16MatrixCSR mat_fp16[2], FP8MatrixCSR mat_fp8[2]) {
   int nnzs[2];
   for (int i = 0; i < 2; i++) {
     cudaMemcpy(nnzs + i, mat_fp8[i].d_values_row_offsets + mat_fp8[i].rows,
-               sizeof(u32), cudaMemcpyDeviceToHost);
+               sizeof(int), cudaMemcpyDeviceToHost);
   }
   cudaDeviceSynchronize();
   for (int i = 0; i < 2; i++) {
     cudaMalloc(reinterpret_cast<void **>(&mat_fp8[i].d_values),
-               sizeof(u32) * nnzs[i]);
+               sizeof(int) * nnzs[i]);
     cudaMalloc(reinterpret_cast<void **>(&mat_fp8[i].d_columns),
                sizeof(u64) * nnzs[i]);
   }
@@ -881,32 +608,18 @@ void convert_sync(FP16MatrixCSR mat_fp16[2], FP8MatrixCSR mat_fp8[2]) {
   cudaDeviceSynchronize();
 }
 
-#if ENABLE_TORCH
-template <class T>
-torch::Tensor tensor_from_cuda_ptr(T *d_ptr, int64_t size,
-                                   torch::ScalarType dtype) {
-  // Create a tensor from the raw CUDA pointer.
-  auto options = torch::TensorOptions().device(torch::kCUDA).dtype(dtype);
-  return torch::from_blob(d_ptr, {size}, options);
-}
-#endif
-
-
-namespace doublesparse_external {
-int doublesparse_matmul_external_timer(int m, int n, int k, int *a_row_offsets,
-                                       int *a_col_vals, int *b_row_offsets,
-                                       int *b_col_vals, int non_zero_rows,
-                                       int batch_size,
-                                       // 16-bit
-                                       // Input
-                                       void *X, void *y, void *d_workspace_ptr,
-                                       // Output
-                                       cudaStream_t stream, void *measurements,
-                                       uint32_t feature_flag) {
-  Features features{._ = feature_flag};
-
-  constexpr u32 WARP_COUNT = 16;
-  constexpr u32 THREAD_COUNT = WARP_SIZE * WARP_COUNT;
+namespace doublesparse {
+int doublesparse_matmul_fp8(int m, int n, int k, int *a_row_offsets,
+                            int *a_col_vals, int *b_row_offsets,
+                            int *b_col_vals, int non_zero_rows, int batch_size,
+                            // 16-bit
+                            // Input
+                            void *X, void *y, void *d_workspace_ptr,
+                            // Output
+                            cudaStream_t stream, void *measurements,
+                            uint32_t feature_flag) {
+  constexpr int WARP_COUNT = 16;
+  constexpr int THREAD_COUNT = WARP_SIZE * WARP_COUNT;
 
   float *d_workspace = static_cast<float *>(d_workspace_ptr);
 
@@ -916,163 +629,48 @@ int doublesparse_matmul_external_timer(int m, int n, int k, int *a_row_offsets,
                             FP16MatrixCSR{.rows = non_zero_rows,
                                           .d_row_offsets = b_row_offsets,
                                           .d_col_vals = b_col_vals}};
+  Features features{._ = feature_flag};
 
   float measurement = 0;
 
-  if (features.flags.is_torch_sparse) {
-    TorchCSR mat_torch[2] = {TorchCSR{.rows = m}, TorchCSR{.rows = k}};
-    std::vector<torch::Tensor> torch_csr_tensors(2);
-    torch::Tensor dense_inputs[2];
-    torch::Tensor dense_outputs[2];
+  FP8MatrixCSR mat8[2] = {FP8MatrixCSR{.rows = m},
+                          FP8MatrixCSR{.rows = non_zero_rows}};
 
-    convert_sync(mat16, mat_torch);
-    for (int i = 0; i < 2; i++) {
-      torch::Tensor crow_indices = tensor_from_cuda_ptr(
-          mat_torch[i].d_row_offsets, mat_torch[i].rows + 1, torch::kInt32);
-      torch::Tensor col_indices = tensor_from_cuda_ptr(
-          mat_torch[i].d_columns, mat_torch[i].nnz, torch::kInt32);
-      torch::Tensor values = tensor_from_cuda_ptr(
-          mat_torch[i].d_values, mat_torch[i].nnz, torch::kFloat);
-      torch_csr_tensors[i] = torch::sparse_csr_tensor(
-          crow_indices, col_indices, values,
-          ((i == 0) ? torch::IntArrayRef{m, k} : torch::IntArrayRef{k, n}),
-          torch::TensorOptions().device(torch::kCUDA));
-    }
-    dense_inputs[0] =
-        torch::rand(
-            {k * batch_size, 1},
-            torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA))
-            .contiguous();
-    dense_inputs[1] =
-        torch::rand(
-            {n * batch_size, 1},
-            torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA))
-            .contiguous();
+  for (int i = 0; i < 2; i++) {
+    mat8[i].allocate();
+  }
 
-    dense_outputs[0] =
-        torch::rand(
-            {m * batch_size, 1},
-            torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA))
-            .contiguous();
-    dense_outputs[1] =
-        torch::rand(
-            {k * batch_size, 1},
-            torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA))
-            .contiguous();
+  cudaDeviceSynchronize();
 
-    for (int i = 0; i < WARMUPS; i++) {
-      matmul_out(dense_outputs[1], torch_csr_tensors[1], dense_inputs[1]);
-      cudaDeviceSynchronize();
-      matmul_out(dense_outputs[0], torch_csr_tensors[0], dense_inputs[0]);
-    }
+  convert_sync(mat16, mat8);
 
-    MyTimer timer(stream);
-    timer.start();
-    for (int i = 0; i < NUM_RUNS; i++) {
-      matmul_out(dense_outputs[1], torch_csr_tensors[1], dense_inputs[1]);
-      cudaDeviceSynchronize();
-      matmul_out(dense_outputs[0], torch_csr_tensors[0], dense_inputs[0]);
-    }
-
-    measurement = timer.end_and_measure() / NUM_RUNS;
-
-    for (int i = 0; i < 2; i++) {
-      mat_torch[i].free();
-    }
-  } else if (features.flags.is_fp8) {
-    FP8MatrixCSR mat8[2] = {FP8MatrixCSR{.rows = m},
-                            FP8MatrixCSR{.rows = non_zero_rows}};
-
-    for (int i = 0; i < 2; i++) {
-      mat8[i].allocate();
-    }
-
-    cudaDeviceSynchronize();
-
-    convert_sync(mat16, mat8);
-
+  if (measurements) {
     for (int j = 0; j < WARMUPS; j++) {
-      //      KERNEL_CALL_FP8
+      KERNEL_CALL_FP8
     }
-
     cudaDeviceSynchronize();
-
     MyTimer timer(stream);
 
     timer.start();
     for (int j = 0; j < NUM_RUNS; j++) {
-      //      KERNEL_CALL_FP8
+      KERNEL_CALL_FP8
     }
 
     measurement = timer.end_and_measure() / NUM_RUNS;
+    static_cast<float *>(measurements)[0] = measurement;
+  } else {
+    KERNEL_CALL_FP8
 
-    for (int i = 0; i < 2; i++) {
-      mat8[i].free();
-    }
-  } else if (features.flags.is_sputnik) {
-    SputnikCSR mat_sputnik[2] = {SputnikCSR{.rows = m, .cols = k},
-                                 SputnikCSR{.rows = k, .cols = n}};
-
-    half *dense_sputnik_inputs[2];
-    half *dense_sputnik_outputs[2];
-    convert_sync(mat16, mat_sputnik);
-    cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_inputs[1]),
-               n * batch_size * sizeof(half));
-    cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_inputs[0]),
-               k * batch_size * sizeof(half));
-
-    cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_outputs[1]),
-               k * batch_size * sizeof(half));
-    cudaMalloc(reinterpret_cast<void **>(&dense_sputnik_outputs[0]),
-               m * batch_size * sizeof(half));
-
-    cudaDeviceSynchronize();
-    for (int j = 0; j < WARMUPS; j++) {
-      for (int i = 1; i >= 0; i--) {
-        sputnik::CudaSpmm(
-            (i == 1) ? k : m, (i == 1 ? n : k), std::max(batch_size, 2),
-            mat_sputnik[i].nnz, mat_sputnik[i].d_row_indices,
-            reinterpret_cast<half2 *>(mat_sputnik[i].d_values),
-            mat_sputnik[i].d_row_offsets,
-            reinterpret_cast<short2 *>(mat_sputnik[i].d_columns),
-            reinterpret_cast<half2 *>(dense_sputnik_inputs[i]),
-            reinterpret_cast<half2 *>(dense_sputnik_outputs[i]), stream);
-        if (i) {
-          cudaDeviceSynchronize();
-        }
-      }
-    }
-
-    cudaDeviceSynchronize();
-
-    MyTimer timer(stream);
-    timer.start();
-    for (int j = 0; j < NUM_RUNS; j++) {
-      for (int i = 1; i >= 0; i--) {
-        sputnik::CudaSpmm(
-            (i == 1) ? k : m, (i == 1 ? n : k), std::max(batch_size, 2),
-            mat_sputnik[i].nnz, mat_sputnik[i].d_row_indices,
-            reinterpret_cast<half2 *>(mat_sputnik[i].d_values),
-            mat_sputnik[i].d_row_offsets,
-            reinterpret_cast<short2 *>(mat_sputnik[i].d_columns),
-            reinterpret_cast<half2 *>(dense_sputnik_inputs[i]),
-            reinterpret_cast<half2 *>(dense_sputnik_outputs[i]), stream);
-        if (i) {
-          cudaDeviceSynchronize();
-        }
-      }
-    }
-
-    measurement = timer.end_and_measure() / NUM_RUNS;
-
-    for (int i = 0; i < 2; i++) {
-      mat_sputnik[i].free();
+    if (!features.flags.is_async) {
+      cudaDeviceSynchronize();
     }
   }
 
-  static_cast<float *>(measurements)[0] = measurement;
+  for (int i = 0; i < 2; i++) {
+    mat8[i].free();
+  }
 
   return 0;
 }
 
-} // namespace doublesparse_external
+} // namespace doublesparse

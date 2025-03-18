@@ -9,7 +9,7 @@ DOUBLESPARSE_CUDA = load(
     sources=[os.path.join(CUDA_FOLDER, "doublesparse_cuda.cpp"),
              os.path.join(CUDA_FOLDER, "doublesparse_cuda_kernel.cu"),
              os.path.join(CUDA_FOLDER, "spops/spops/lib/sputnik_spops_kernels.cu"),
-             os.path.join(CUDA_FOLDER, "doublesparse_external_fp8.cu"),
+             os.path.join(CUDA_FOLDER, "doublesparse_fp8.cu"),
              os.path.join(CUDA_FOLDER, "doublesparse_external.cu")],
     extra_cflags=[""],
     extra_cuda_cflags=["-O3 -gencode=arch=compute_89,code=compute_89 -gencode=arch=compute_89,code=sm_89"]
