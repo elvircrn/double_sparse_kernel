@@ -135,3 +135,7 @@ struct MyTimer {
     cudaEventDestroy(ce_stop);
   }
 };
+
+static constexpr u32 NUM_RUNS = 2000;
+static constexpr u32 WARMUPS = 500;
+

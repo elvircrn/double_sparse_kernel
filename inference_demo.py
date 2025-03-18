@@ -200,8 +200,8 @@ if __name__ == "__main__":
         required=True,
         type=int,
         help="If set to 0, will evaluate the dense pretrained model. "
-             "If set to 1, will evaluate the spqr-quantized model using HF"
-             "If set to 2, will evaluate the spqr-quantized model using torch .pt",
+             "If set to 1, will evaluate the doublesparse-quantized model using HF"
+             "If set to 2, will evaluate the doublesparse-quantized model using torch .pt",
     )
 
     args = parser.parse_args()
@@ -211,7 +211,7 @@ if __name__ == "__main__":
     max_new_tokens = 16
     with torch.no_grad():
         model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m, backend='cudagraphs')
-        text = "P"  # input()
+        text = "President Truman"  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=max_new_tokens)
         e = time.time()

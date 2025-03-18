@@ -2,3 +2,9 @@ baseline_fp16_csr 0.233463
 baseline_fp16_csr 0.239698
 baseline_fp16_csr 0.0612318
 baseline_fp8_csr 6.56698
+sputnik          0.0833057
+fp16             0.0838949
+fp16             2.17629
+fp16             2.2644
+fp16             2.25447
+fp16             0.0767559

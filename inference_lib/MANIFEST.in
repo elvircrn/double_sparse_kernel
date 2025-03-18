@@ -1,4 +1,5 @@
-include src/double_sparse_compression/inference_kernels/spqr_cuda.cpp
-include src/double_sparse_compression/inference_kernels/spqr_cuda_kernel.cu
+include src/double_sparse_compression/inference_kernels/doublesparse_cuda.cpp
+include src/double_sparse_compression/inference_kernels/doublesparse_cuda_kernel.cu
+include src/double_sparse_compression/inference_kernels/doublesparse_cuda_kernel_external.cu
 include src/double_sparse_compression/inference_kernels/common.cuh
 recursive-include src/*.py

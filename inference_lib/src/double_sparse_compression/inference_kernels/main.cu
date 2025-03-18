@@ -69,12 +69,13 @@ struct Result {
 };
 
 Result mul_with_time(const SparsifiedLinear &d_s, XType *d_x, XType *d_y,
-                     float *measurements, int k, Features features) {
+                     float *measurements, int k,
+                     doublesparse::Features features) {
   u32 *d_workspace;
   cudaMalloc(reinterpret_cast<void **>(&d_workspace), k * 165536 * sizeof(u32));
   cudaDeviceSynchronize();
 
-  doublesparse_matmul(d_s.m, d_s.n, d_s.k, d_s.d_a_row_offsets,
+  doublesparse::doublesparse_matmul(d_s.m, d_s.n, d_s.k, d_s.d_a_row_offsets,
                       d_s.d_a_col_vals, d_s.d_b_row_offsets, d_s.d_b_col_vals,
                       d_s.non_zero_rows, k, d_x, d_y, d_workspace, nullptr,
                       measurements, features._);
@@ -99,7 +100,7 @@ SparsifiedLinear from_path(const std::string &base_path) {
 }
 
 struct Experiment {
-  Features features;
+  doublesparse::Features features;
   std::string tag;
   bool full;
 };
@@ -108,7 +109,7 @@ int run_experiment(Experiment experiment) {
   std::ofstream results("results.txt", std::ios_base::app);
   static constexpr int XY_SIZE = 11008 * 4;
   static constexpr int NUM_REPS = 512;
-  int num_layers = 20;
+  int num_layers = 32;
   auto d_x = device_from_size<uint16_t>(XY_SIZE);
   auto d_y = device_from_size<uint16_t>(XY_SIZE);
 
@@ -128,7 +129,7 @@ int run_experiment(Experiment experiment) {
   float mean_runtime = 0.f;
   int tests{};
 
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < num_layers; i++) {
     for (const auto &layer_name : all_layer_names) {
       std::string quant_linear_path =
           "/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/"
@@ -160,16 +161,16 @@ int run_experiment(Experiment experiment) {
 
 int main() {
   std::string tag = "baseline_fp8_csr";
-  Features features_fp8{._ = 0u};
+  doublesparse::Features features_fp8{._ = 0u};
   features_fp8.flags.is_fp8 = true;
-  Features features_torch_sparse{._ = 0u};
+  doublesparse::Features features_torch_sparse{._ = 0u};
   features_torch_sparse.flags.is_torch_sparse = true;
-  Features features_fp16{._ = 0u};
-  Features features_sputnik{._ = 0u};
+  doublesparse::Features features_fp16{._ = 0u};
+  doublesparse::Features features_sputnik{._ = 0u};
   features_sputnik.flags.is_sputnik = true;
 
 
-  bool full = false;
+  bool full = true;
 
 #if 0
   std::vector<Experiment> experiments{
@@ -181,7 +182,7 @@ int main() {
 #else
   std::vector experiments{
     Experiment{
-      .features = features_sputnik, .tag = "sputnik", .full = full}
+      .features = features_fp16, .tag = "fp16", .full = full}
   };
 #endif
 

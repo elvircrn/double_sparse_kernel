@@ -11,7 +11,6 @@ import pandas as pd
 from double_sparse_compression import SparsifiedLinear
 from double_sparse_compression.inference import FeatureFlags
 from double_sparse_compression.inference_kernels.kernel_selector import get_doublesparse_mul_timer
-
 cutlass_str_rtx4060 = """m,n,k,Runtime
 11008,11008,1,1.04251
 11008,4096,1,0.395374
@@ -26,7 +25,7 @@ cutlass_str_a100 = """Problem,Provider,OperationKind,Operation,Disposition,Statu
 4,CUTLASS,gemm,cutlass_tensorop_f16_s16816gemm_f16_256x128_32x3_nt_align8,passed,success,universal,11008,11008,1,f16:column,f16:row,f16:column,f16:column,1,0,serial,1,1,heuristic,1,tensorop,f32,256,128,32,1,1,1,3,4,2,1,16,8,16,80,1024,242396160,484704256,1,0.181715,1242.32,2667.39
 """
 
-cutlass_str = cutlass_str_rtx4060 # Set for the specific GPU here
+cutlass_str = cutlass_str_rtx4060  # Set for the specific GPU here
 
 cutlass_data = io.StringIO(cutlass_str)
 cutlass_runs = pd.read_csv(cutlass_data)
@@ -50,13 +49,13 @@ def doublesparse_mul_timer(doublesparse_device: SparsifiedLinear, x, feature_fla
         y,
         result,
         feature_flag,
-        torch.tensor(k, dtype=torch.float, device=x.device)
+        torch.tensor(doublesparse_device.k * batch_size, dtype=torch.float, device=x.device)
     )
 
     return y, result.item()
 
 
-if __name__ == "__main__":
+def run():
     torch_runs = {}
 
     parser = argparse.ArgumentParser(add_help=True)
@@ -103,7 +102,6 @@ if __name__ == "__main__":
 
         methods = [
             FeatureFlags.CSR,
-            FeatureFlags.CSR_FP8
         ]
 
         f.write("Layer;Tensor Name;M;N;K;Dense (FP16)")
@@ -120,42 +118,41 @@ if __name__ == "__main__":
             x_fp32 = ((torch.rand(n) - 0.5) * 4 * upper_bound).int()
             return x_fp32.float()
 
-
         x_fp32 = generate_x_fp32(n)
         x_fp16_device = x_fp32.cuda(device=device).half()
 
-        for layer_id in csr_folders:
+        for i, layer_id in enumerate(csr_folders):
             folder = os.path.join(base_path, layer_id)
 
-            folders_modified_csr = os.path.join(base_path, layer_id)
             if not os.path.isdir(folder):
                 continue
 
             for p in os.listdir(folder):
-                # if 'up_proj' not in p: continue
+                name = layer_id + '.' + p
                 tensor_path = os.path.join(folder, p)
                 doublesparse_module = torch.load(tensor_path)
+                doublesparse_module_device = doublesparse_module.to(device=device)
 
                 m = doublesparse_module.m
                 n = doublesparse_module.n
                 k = doublesparse_module.k
                 batch_size = 1
-
-
-                doublesparse_module_device = doublesparse_module.to(device=device)
-
-                dense_speed_up = 0
-                baseline_speed_up = 0
-
                 torch_run = torch_runs[(doublesparse_module_device.m, doublesparse_module_device.n)]
 
-                print(f"Running {m} x {n} x {k} Batch Size = {batch_size} Densities {doublesparse_module_device.a_row_offsets[-1] / (m * k):.2f} {doublesparse_module_device.b_row_offsets[-1] / (k * n):.2f}")
+
+                print(
+                    f"Running {m} x {n} x {k} Batch Size = {batch_size} Densities {doublesparse_module_device.a_row_offsets[-1] / (m * k):.2f} {doublesparse_module_device.b_row_offsets[-1] / (k * n):.2f}")
                 f.write(f"{layer_id};{p};{m};{n};{k};{torch_run:.4f}")
 
                 for flag in methods:
+
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
                     print(f"Running {repr(flag)} on {layer_id}.{p}")
 
-                    y_csr, this_algorithm = doublesparse_mul_timer(doublesparse_module_device, x_fp16_device, flag, batch_size)
+                    y_csr, this_algorithm = doublesparse_mul_timer(doublesparse_module_device, x_fp16_device, flag,
+                                                                   batch_size)
+
 
                     speed_up = torch_run / this_algorithm
 
@@ -180,3 +177,8 @@ if __name__ == "__main__":
             print(f"Total benchmark speed-up mean= {np.array(benchmark_speed_up).mean()}")
 
             print("\n\n")
+
+
+if __name__ == '__main__':
+    with torch.no_grad():
+        run()
